@@ -3,6 +3,8 @@
 抖音自动续火花助手 — Electron 桌面端。  
 通过 Playwright + Cookie 登录，每天自动向好友发送续火花消息，支持 Web 可视化控制面板。
 
+🌐 **官网**: [https://www.uu233.xyz/](https://www.uu233.xyz/)
+
 ## 截图
 
 ![主页仪表盘](docs/screenshots/dashboard.png)
