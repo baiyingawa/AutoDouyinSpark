@@ -1,0 +1,26 @@
+appId: com.spark.auto-douyin
+productName: AutoDouyinSpark
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/**/*
+  - python/**/*
+  - package.json
+extraResources:
+  - from: python
+    to: python
+    filter:
+      - "**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: AutoDouyinSpark
+generateUpdatesFilesForAllChannels: false

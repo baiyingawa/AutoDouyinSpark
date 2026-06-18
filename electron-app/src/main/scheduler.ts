@@ -1,0 +1,303 @@
+/**
+ * scheduler.ts - AutoDouyinSpark 任务调度器
+ *
+ * 每分钟检查当前时间是否在配置的时间窗口内。
+ * 如果在窗口内且今日未发送，则调用 Python send。
+ * 调度器状态通过 IPC 主进程事件推送给渲染进程。
+ */
+
+import { BrowserWindow } from 'electron';
+import { PythonManager } from './python-manager';
+import { IPC_CHANNELS } from '../shared/ipc-channels';
+import path from 'path';
+import { app } from 'electron';
+
+export interface TimeWindow {
+  morningStart: number;  // 默认 1
+  morningEnd: number;    // 默认 7
+  eveningStart: number;  // 默认 17
+  eveningEnd: number;    // 默认 19
+}
+
+export interface SchedulerOptions {
+  windows: TimeWindow;
+  dataDir?: string;
+  onStatusChange?: (status: SchedulerStatus) => void;
+}
+
+export interface SchedulerStatus {
+  running: boolean;
+  currentWindow: string | null;
+  lastCheck: string | null;
+  nextAction: string | null;
+}
+
+const DEFAULT_WINDOWS: TimeWindow = {
+  morningStart: 1,
+  morningEnd: 7,
+  eveningStart: 17,
+  eveningEnd: 19,
+};
+
+export class SparkScheduler {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private pm: PythonManager;
+  private windows: TimeWindow;
+  private dataDir: string;
+  private lastCheckTime: string | null = null;
+  private onStatusChange: ((status: SchedulerStatus) => void) | null = null;
+  private notifyingWindows: Set<BrowserWindow> = new Set();
+
+  constructor(options: SchedulerOptions = { windows: DEFAULT_WINDOWS }) {
+    this.pm = new PythonManager();
+    this.windows = options.windows || DEFAULT_WINDOWS;
+    this.dataDir = options.dataDir || path.join(app.getPath('userData'), 'data');
+    this.onStatusChange = options.onStatusChange || null;
+  }
+
+  /**
+   * 注册一个 BrowserWindow 以接收调度器状态推送
+   */
+  registerWindow(win: BrowserWindow): void {
+    this.notifyingWindows.add(win);
+    win.on('closed', () => {
+      this.notifyingWindows.delete(win);
+    });
+  }
+
+  /**
+   * 撤销窗口注册
+   */
+  unregisterWindow(win: BrowserWindow): void {
+    this.notifyingWindows.delete(win);
+  }
+
+  /**
+   * 向所有已注册窗口推送状态
+   */
+  private broadcastStatus(status: SchedulerStatus): void {
+    for (const win of this.notifyingWindows) {
+      try {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.SPARK_SCHEDULER_STATUS, status);
+        }
+      } catch {
+        // 忽略已关闭窗口的错误
+      }
+    }
+  }
+
+  /**
+   * 获取当前时间窗口（北京时间）
+   */
+  private getCurrentWindow(): string | null {
+    const now = new Date();
+    // 转换为北京时间 (UTC+8)
+    const utcHour = now.getUTCHours();
+    const utcMinute = now.getUTCMinutes();
+    // 北京时间 = UTC + 8
+    const beijingHour = (utcHour + 8) % 24;
+
+    if (beijingHour >= this.windows.morningStart && beijingHour <= this.windows.morningEnd) {
+      return 'morning';
+    }
+    if (beijingHour >= this.windows.eveningStart && beijingHour <= this.windows.eveningEnd) {
+      return 'evening';
+    }
+    return null;
+  }
+
+  /**
+   * 获取今日已发送状态
+   */
+  private async getTodaySentStatus(): Promise<boolean> {
+    const stateFile = path.join(this.dataDir, '.spark_state');
+    try {
+      const fs = await import('fs');
+      if (!fs.existsSync(stateFile)) return false;
+      const savedDate = fs.readFileSync(stateFile, 'utf-8').trim();
+      const today = new Date();
+      const beijingDate = new Date(today.getTime() + 8 * 60 * 60 * 1000)
+        .toISOString().split('T')[0];
+      return savedDate === beijingDate;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 获取下次可执行的时间窗口描述
+   */
+  private getNextWindowDescription(): string | null {
+    const now = new Date();
+    const utcHour = now.getUTCHours();
+    const beijingHour = (utcHour + 8) % 24;
+    const beijingMin = now.getUTCMinutes();
+
+    // 如果目前在上次窗口内，下次就是下次窗口开始
+    const current = this.getCurrentWindow();
+    if (current) return 'now';
+
+    // 计算下次窗口开始时间
+    // 如果当前 < 早间窗口开始 -> 早间窗口
+    if (beijingHour < this.windows.morningStart) {
+      return `明天 ${this.windows.morningStart}:00`;
+    }
+    // 如果当前在早间和傍晚之间 -> 傍晚
+    if (beijingHour < this.windows.eveningStart) {
+      return `今天 ${this.windows.eveningStart}:00`;
+    }
+    // 如果当前 > 傍晚窗口结束 -> 明天早间
+    return `明天 ${this.windows.morningStart}:00`;
+  }
+
+  /**
+   * 执行一次检查
+   */
+  async checkAndExecute(): Promise<void> {
+    this.lastCheckTime = new Date().toISOString();
+    const currentWindow = this.getCurrentWindow();
+
+    try {
+      if (!currentWindow) {
+        this.broadcastStatus({
+          running: this.isRunning(),
+          currentWindow: null,
+          lastCheck: this.lastCheckTime,
+          nextAction: this.getNextWindowDescription(),
+        });
+        return;
+      }
+
+      // 在窗口内，检查今日是否已发送
+      const sentToday = await this.getTodaySentStatus();
+      if (sentToday) {
+        this.broadcastStatus({
+          running: this.isRunning(),
+          currentWindow,
+          lastCheck: this.lastCheckTime,
+          nextAction: 'today_sent',
+        });
+        return;
+      }
+
+      // 今日未发送，调用 Python send
+      console.log(`[Scheduler] 时间窗口 ${currentWindow}，开始自动发送...`);
+
+      // 检查登录状态
+      const enginePath = this.getEngineScriptPath();
+      const loginCheck = await this.pm.exec(enginePath, [
+        '--data-dir', this.dataDir,
+        '--action', 'check-login',
+        '--json',
+      ], { timeout: 30000 });
+
+      if (loginCheck.success && loginCheck.stdout) {
+        try {
+          const parsed = JSON.parse(loginCheck.stdout);
+          if (parsed.valid === false) {
+            console.error(`[Scheduler] Cookie 无效，跳过自动发送`);
+            return;
+          }
+        } catch {}
+      }
+
+      const result = await this.pm.exec(enginePath, [
+        '--data-dir', this.dataDir,
+        '--action', 'send',
+        '--json',
+      ], { timeout: 120000 });
+
+      if (result.success) {
+        console.log(`[Scheduler] 自动发送成功`);
+      } else {
+        console.error(`[Scheduler] 自动发送失败: ${result.stderr}`);
+      }
+
+      this.broadcastStatus({
+        running: this.isRunning(),
+        currentWindow,
+        lastCheck: this.lastCheckTime,
+        nextAction: 'completed',
+      });
+
+    } catch (err) {
+      console.error(`[Scheduler] 检查异常:`, err);
+    }
+
+    if (this.onStatusChange) {
+      this.onStatusChange({
+        running: this.isRunning(),
+        currentWindow,
+        lastCheck: this.lastCheckTime,
+        nextAction: this.getNextWindowDescription(),
+      });
+    }
+  }
+
+  /**
+   * 获取 engine.py 路径
+   */
+  private getEngineScriptPath(): string {
+    if (process.env.VITE_DEV_SERVER_URL) {
+      return path.join(__dirname, '..', '..', 'python', 'engine.py');
+    }
+    return path.join(process.resourcesPath, 'python', 'engine.py');
+  }
+
+  /**
+   * 启动调度器
+   */
+  start(): void {
+    if (this.timer) return;
+    console.log('[Scheduler] 调度器已启动');
+
+    // 先立即检查一次
+    this.checkAndExecute();
+
+    // 然后每分钟检查一次
+    this.timer = setInterval(() => {
+      this.checkAndExecute();
+    }, 60 * 1000);
+  }
+
+  /**
+   * 停止调度器
+   */
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+      console.log('[Scheduler] 调度器已停止');
+    }
+  }
+
+  /**
+   * 获取运行状态
+   */
+  isRunning(): boolean {
+    return this.timer !== null;
+  }
+
+  /**
+   * 获取当前状态
+   */
+  getStatus(): SchedulerStatus {
+    return {
+      running: this.isRunning(),
+      currentWindow: this.getCurrentWindow(),
+      lastCheck: this.lastCheckTime,
+      nextAction: this.getNextWindowDescription(),
+    };
+  }
+}
+
+// 默认调度器实例（懒加载）
+let _defaultScheduler: SparkScheduler | null = null;
+
+export function getDefaultScheduler(): SparkScheduler {
+  if (!_defaultScheduler) {
+    _defaultScheduler = new SparkScheduler();
+  }
+  return _defaultScheduler;
+}

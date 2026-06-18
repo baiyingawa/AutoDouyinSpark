@@ -1,0 +1,36 @@
+# 邮箱 SMTP 凭证
+email_config.json
+
+# 运行时状态文件
+.spark_state
+.spark_alert_state
+.spark_streak
+.spark_days_cache
+.spark_confirm
+.spark_login_check
+.spark_log
+.spark_send_pid
+.spark_refresh_pid
+*.png
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+dist/
+
+# Electron
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cookie（涉密）
+cookie_export.json
