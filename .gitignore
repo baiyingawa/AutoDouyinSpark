@@ -12,6 +12,7 @@ email_config.json
 .spark_send_pid
 .spark_refresh_pid
 *.png
+!docs/screenshots/*.png
 
 # Python 缓存
 __pycache__/
@@ -34,3 +35,6 @@ Thumbs.db
 
 # Cookie（涉密）
 cookie_export.json
+
+# 项目手册（非代码，仅本地查阅）
+PROJECT_MANUAL.md
