@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { History, ChevronDown } from 'lucide-react';
 import SparkDaysChart from '../components/SparkDaysChart';
 import ScreenshotGallery from '../components/ScreenshotGallery';
@@ -15,28 +15,54 @@ interface ScreenshotFile {
   mtime: string;
 }
 
+type TimeRange = '7d' | '15d' | '30d' | '1y';
+
+const TIME_RANGES: { value: TimeRange; label: string }[] = [
+  { value: '7d', label: '近一周' },
+  { value: '15d', label: '近15天' },
+  { value: '30d', label: '近一月' },
+  { value: '1y', label: '近一年' },
+];
+
+function getCutoffDate(range: TimeRange): Date {
+  const now = new Date();
+  switch (range) {
+    case '7d': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case '15d': return new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+    case '30d': return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    case '1y': return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  }
+}
+
+function groupByMonth(records: SparkDayRecord[]): SparkDayRecord[] {
+  const map = new Map<string, { days: Record<string, number>; lastDate: string }>();
+  for (const r of records) {
+    const month = r.date.substring(0, 7); // "2026-06"
+    if (!map.has(month)) {
+      map.set(month, { days: {}, lastDate: r.date });
+    }
+    const entry = map.get(month)!;
+    entry.lastDate = r.date;
+    for (const [user, days] of Object.entries(r.days)) {
+      entry.days[user] = days; // take the latest value in that month
+    }
+  }
+  return Array.from(map.entries())
+    .map(([month, data]) => ({
+      date: month,
+      days: data.days,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 const HistoryPage: React.FC = () => {
   const [records, setRecords] = useState<SparkDayRecord[]>([]);
   const [screenshots, setScreenshots] = useState<ScreenshotFile[]>([]);
   const [selectedUser, setSelectedUser] = useState<string>('');
+  const [timeRange, setTimeRange] = useState<TimeRange>('15d');
   const [loading, setLoading] = useState(true);
   const [screenshotsLoading, setScreenshotsLoading] = useState(true);
-
-  // 获取所有用户名
-  const allUsers = React.useMemo(() => {
-    const userSet = new Set<string>();
-    records.forEach((r) => {
-      Object.keys(r.days).forEach((u) => userSet.add(u));
-    });
-    return Array.from(userSet).sort();
-  }, [records]);
-
-  // 自动选择第一个（默认显示全部好友）
-  // useEffect(() => {
-  //   if (allUsers.length > 0 && !selectedUser) {
-  //     setSelectedUser(allUsers[0]);
-  //   }
-  // }, [allUsers, selectedUser]);
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
 
   // 加载历史
   const loadHistory = useCallback(async () => {
@@ -66,9 +92,18 @@ const HistoryPage: React.FC = () => {
     setScreenshotsLoading(false);
   }, []);
 
+  // 加载头像
+  const loadAvatars = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.sparkStatus();
+      if (result.avatars) setAvatars(result.avatars);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     loadHistory();
     loadScreenshots();
+    loadAvatars();
   }, [loadHistory, loadScreenshots]);
 
   // 好友变更时实时刷新
@@ -78,22 +113,41 @@ const HistoryPage: React.FC = () => {
     return () => window.removeEventListener('friends-changed', handleFriendsChanged);
   }, [loadHistory, loadScreenshots]);
 
+  // 按时间范围过滤记录
+  const filteredRecords = useMemo(() => {
+    const cutoff = getCutoffDate(timeRange);
+    const filtered = records.filter((r) => new Date(r.date) >= cutoff);
+    // 近一年按月聚合
+    if (timeRange === '1y') {
+      return groupByMonth(filtered);
+    }
+    return filtered;
+  }, [records, timeRange]);
+
+  // 获取所有用户名
+  const allUsers = useMemo(() => {
+    const userSet = new Set<string>();
+    filteredRecords.forEach((r) => {
+      Object.keys(r.days).forEach((u) => userSet.add(u));
+    });
+    return Array.from(userSet).sort();
+  }, [filteredRecords]);
+
   // 构建图表数据
-  const chartLabels = records
+  const chartLabels = filteredRecords
     .filter((r) => selectedUser ? r.days[selectedUser] !== undefined : true)
     .map((r) => r.date);
 
-  // 每个用户一条线
   const chartDatasets = selectedUser
     ? [{
         label: selectedUser,
-        data: records
+        data: filteredRecords
           .filter((r) => r.days[selectedUser] !== undefined)
           .map((r) => r.days[selectedUser]),
       }]
     : allUsers.map((user) => ({
         label: user,
-        data: records
+        data: filteredRecords
           .filter((r) => r.days[user] !== undefined)
           .map((r) => r.days[user]),
       }));
@@ -105,23 +159,43 @@ const HistoryPage: React.FC = () => {
         <h1 className="text-2xl font-bold text-white">发送历史</h1>
       </div>
 
-      {/* 好友选择器 */}
+      {/* 筛选栏 */}
       {allUsers.length > 0 && (
-        <div className="relative inline-block">
-          <select
-            className="appearance-none px-4 py-2 pr-8 rounded-lg border border-gray-700 bg-gray-900 text-gray-200 text-sm focus:outline-none focus:border-blue-500 cursor-pointer"
-            value={selectedUser}
-            onChange={(e) => setSelectedUser(e.target.value)}
-          >
-            <option value="">全部好友</option>
-            {allUsers.map((user) => (
-              <option key={user} value={user}>{user}</option>
-            ))}
-          </select>
-          <ChevronDown
-            size={14}
-            className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500"
-          />
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 好友选择器 */}
+          <div className="relative inline-block">
+            <select
+              className="appearance-none px-4 py-2 pr-8 rounded-lg border border-gray-700 bg-gray-900 text-gray-200 text-sm focus:outline-none focus:border-blue-500 cursor-pointer"
+              value={selectedUser}
+              onChange={(e) => setSelectedUser(e.target.value)}
+            >
+              <option value="">全部好友</option>
+              {allUsers.map((user) => (
+                <option key={user} value={user}>{user}</option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500"
+            />
+          </div>
+
+          {/* 时间范围选择器 */}
+          <div className="relative inline-block">
+            <select
+              className="appearance-none px-4 py-2 pr-8 rounded-lg border border-gray-700 bg-gray-900 text-gray-200 text-sm focus:outline-none focus:border-blue-500 cursor-pointer"
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+            >
+              {TIME_RANGES.map((tr) => (
+                <option key={tr.value} value={tr.value}>{tr.label}</option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500"
+            />
+          </div>
         </div>
       )}
 
@@ -139,6 +213,7 @@ const HistoryPage: React.FC = () => {
           <SparkDaysChart
             labels={chartLabels}
             datasets={chartDatasets.length > 0 ? chartDatasets : [{ label: '暂无数据', data: [] }]}
+            avatars={avatars}
           />
         )}
       </div>

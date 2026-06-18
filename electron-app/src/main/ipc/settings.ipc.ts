@@ -60,10 +60,8 @@ export function registerSettingsHandlers(): void {
           success: true,
           exists: false,
           config: {
-            morningStart: 1,
-            morningEnd: 7,
-            eveningStart: 17,
-            eveningEnd: 19,
+            timeWindowsEnabled: false,
+            timeWindows: [],
             messageTemplate: '[Auto]火花火花！{time}',
             autoStart: false,
             hideBrowser: true,
@@ -71,11 +69,31 @@ export function registerSettingsHandlers(): void {
         };
       }
       const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+      // 兼容旧配置：如果有 morningStart 字段，迁移到新格式
+      let timeWindowsEnabled = data.timeWindowsEnabled;
+      let timeWindows = data.timeWindows;
+      if (timeWindowsEnabled === undefined) {
+        // 旧配置，检查是否有旧的时间窗口设置
+        const hasOldWindows = data.morningStart !== undefined || data.eveningStart !== undefined;
+        if (hasOldWindows) {
+          timeWindowsEnabled = true;
+          timeWindows = [];
+          if (data.morningStart !== undefined) {
+            timeWindows.push({ start: data.morningStart, end: data.morningEnd ?? 7 });
+          }
+          if (data.eveningStart !== undefined) {
+            timeWindows.push({ start: data.eveningStart, end: data.eveningEnd ?? 19 });
+          }
+        } else {
+          timeWindowsEnabled = false;
+          timeWindows = [];
+        }
+      }
+
       const config = {
-        morningStart: data.morningStart ?? 1,
-        morningEnd: data.morningEnd ?? 7,
-        eveningStart: data.eveningStart ?? 17,
-        eveningEnd: data.eveningEnd ?? 19,
+        timeWindowsEnabled: timeWindowsEnabled,
+        timeWindows: timeWindows || [],
         messageTemplate: data.message_template || '[Auto]火花火花！{time}',
         autoStart: data.autoStart ?? false,
         hideBrowser: data.hideBrowser ?? true,
@@ -102,16 +120,20 @@ export function registerSettingsHandlers(): void {
 
       const merged = {
         ...existing,
-        morningStart: config.morningStart,
-        morningEnd: config.morningEnd,
-        eveningStart: config.eveningStart,
-        eveningEnd: config.eveningEnd,
+        timeWindowsEnabled: config.timeWindowsEnabled ?? false,
+        timeWindows: config.timeWindows || [],
         message_template: config.messageTemplate,
         autoStart: config.autoStart,
         hideBrowser: config.hideBrowser ?? true,
         // 保留 target_users
         target_users: existing.target_users || [],
       };
+
+      // 清除旧字段
+      delete merged.morningStart;
+      delete merged.morningEnd;
+      delete merged.eveningStart;
+      delete merged.eveningEnd;
 
       fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
       return { success: true };

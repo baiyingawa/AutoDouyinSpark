@@ -4,9 +4,11 @@ import { Users, Plus, Trash2, AlertCircle, UserPlus } from 'lucide-react';
 interface FriendCardProps {
   username: string;
   onRemove: (username: string) => void;
+  sentToday: boolean;
+  avatarUrl?: string;
 }
 
-const FriendCard: React.FC<FriendCardProps> = ({ username, onRemove }) => {
+const FriendCard: React.FC<FriendCardProps> = ({ username, onRemove, sentToday, avatarUrl }) => {
   const [showConfirm, setShowConfirm] = useState(false);
 
   return (
@@ -15,15 +17,30 @@ const FriendCard: React.FC<FriendCardProps> = ({ username, onRemove }) => {
       style={{ backgroundColor: 'var(--bg-secondary)' }}
     >
       <div className="flex items-center gap-3">
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={username}
+            className="w-10 h-10 rounded-full object-cover"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+              (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+            }}
+          />
+        ) : null}
         <div
-          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+          className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm ${
+            avatarUrl ? 'hidden' : ''
+          }`}
           style={{ backgroundColor: 'var(--accent)' }}
         >
           {username.charAt(0)}
         </div>
         <div>
           <p className="text-white font-medium">{username}</p>
-          <p className="text-gray-500 text-xs">等待发送</p>
+          <p className={`text-xs ${sentToday ? 'text-green-500' : 'text-gray-500'}`}>
+            {sentToday ? '已发送' : '等待发送'}
+          </p>
         </div>
       </div>
 
@@ -64,6 +81,8 @@ const FriendsPage: React.FC = () => {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sentToday, setSentToday] = useState(false);
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
 
   // 加载好友列表
   const loadFriends = useCallback(async () => {
@@ -82,9 +101,26 @@ const FriendsPage: React.FC = () => {
     setLoading(false);
   }, []);
 
+  // 获取发送状态和头像
+  const loadStatus = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.sparkStatus();
+      setSentToday(result.sentToday === true);
+      setAvatars(result.avatars || {});
+    } catch {}
+  }, []);
+
   useEffect(() => {
     loadFriends();
-  }, [loadFriends]);
+    loadStatus();
+  }, [loadFriends, loadStatus]);
+
+  // 好友变更时刷新
+  useEffect(() => {
+    const handleFriendsChanged = () => { loadFriends(); loadStatus(); };
+    window.addEventListener('friends-changed', handleFriendsChanged);
+    return () => window.removeEventListener('friends-changed', handleFriendsChanged);
+  }, [loadFriends, loadStatus]);
 
   // 添加好友
   const handleAdd = useCallback(async () => {
@@ -198,6 +234,8 @@ const FriendsPage: React.FC = () => {
               key={username}
               username={username}
               onRemove={handleRemove}
+              sentToday={sentToday}
+              avatarUrl={avatars[username]}
             />
           ))}
         </div>

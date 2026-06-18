@@ -4,6 +4,7 @@ export interface SparkStatusResult {
   streak: number;
   days: Record<string, number>;
   cookieValid: boolean;
+  avatars?: Record<string, string>;
   lastSend: string | null;
   schedulerRunning: boolean | null;
 }
@@ -12,6 +13,7 @@ export interface SparkSendResult {
   success: boolean;
   sentCount: number;
   failCount: number;
+  failedUsers: string[];
   screenshots: string[];
   message?: string;
   error?: string;
@@ -125,7 +127,7 @@ export interface ElectronAPI {
   // 续火花
   sparkSend: (force?: boolean) => Promise<SparkSendResult>;
   sparkStatus: () => Promise<SparkStatusResult>;
-  sparkRefreshDays: () => Promise<{ success: boolean }>;
+  sparkRefreshDays: (force?: boolean) => Promise<{ success: boolean }>;
   sparkSchedulerStatus: () => Promise<{ success: boolean; running: boolean }>;
 
   // 历史
@@ -154,6 +156,23 @@ export interface ElectronAPI {
   // 通用
   appVersion: () => Promise<{ success: boolean; version: string }>;
   appQuit: () => Promise<{ success: boolean }>;
+
+  // 窗口控制
+  windowMinimize: () => Promise<{ success: boolean }>;
+  windowMaximize: () => Promise<{ success: boolean; maximized: boolean }>;
+  windowCloseDialog: () => Promise<{ action: 'tray' | 'quit' | 'cancel' }>;
+  windowIsMaximized: () => Promise<{ maximized: boolean }>;
+
+  // 更新
+  updateCheck: () => Promise<{
+    hasUpdate: boolean;
+    latestVersion: string;
+    currentVersion: string;
+    downloadUrl: string | null;
+    releaseNotes: string | null;
+    releaseUrl: string | null;
+  }>;
+  updateDownload: (downloadUrl: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 declare global {

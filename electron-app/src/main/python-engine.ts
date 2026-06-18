@@ -90,8 +90,8 @@ export class PythonEngine {
   }
 
   // --- 刷新天数 ---
-  async refreshDays(): Promise<any> {
-    return this.callEngine('refresh-days');
+  async refreshDays(force = false): Promise<any> {
+    return this.callEngine('refresh-days', force ? ['--force'] : []);
   }
 
   // --- 登录 ---

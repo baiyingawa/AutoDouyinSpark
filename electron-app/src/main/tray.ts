@@ -117,7 +117,6 @@ export function createTray(mainWindow: BrowserWindow): Tray {
     {
       label: '退出',
       click: () => {
-        (app as any).isQuitting = true;
         app.quit();
       },
     },

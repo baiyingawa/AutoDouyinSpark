@@ -11,6 +11,7 @@ const LogPanel: React.FC = () => {
   const [collapsed, setCollapsed] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const autoExpanded = useRef(false);
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -27,6 +28,26 @@ const LogPanel: React.FC = () => {
   useEffect(() => {
     fetchLogs();
   }, [fetchLogs]);
+
+  // 监听前端触发续火花的自动展开/收起
+  useEffect(() => {
+    const handleExpand = () => {
+      autoExpanded.current = true;
+      setCollapsed(false);
+    };
+    const handleCollapse = () => {
+      if (autoExpanded.current) {
+        setCollapsed(true);
+        autoExpanded.current = false;
+      }
+    };
+    window.addEventListener('log-panel:auto-expand', handleExpand);
+    window.addEventListener('log-panel:auto-collapse', handleCollapse);
+    return () => {
+      window.removeEventListener('log-panel:auto-expand', handleExpand);
+      window.removeEventListener('log-panel:auto-collapse', handleCollapse);
+    };
+  }, []);
 
   // 每 5 秒轮询最新日志（实时日志流）
   useEffect(() => {

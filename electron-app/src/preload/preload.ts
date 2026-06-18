@@ -45,8 +45,8 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.SPARK_SEND, force),
   sparkStatus: () =>
     ipcRenderer.invoke(IPC_CHANNELS.SPARK_STATUS),
-  sparkRefreshDays: () =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPARK_REFRESH_DAYS),
+  sparkRefreshDays: (force = false) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPARK_REFRESH_DAYS, force),
   sparkSchedulerStatus: () =>
     ipcRenderer.invoke(IPC_CHANNELS.SPARK_SCHEDULER_STATUS),
 
@@ -93,6 +93,22 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION),
   appQuit: () =>
     ipcRenderer.invoke(IPC_CHANNELS.APP_QUIT),
+
+  // 窗口控制
+  windowMinimize: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE),
+  windowMaximize: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MAXIMIZE),
+  windowCloseDialog: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE_DIALOG),
+  windowIsMaximized: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.WINDOW_IS_MAXIMIZED),
+
+  // 更新
+  updateCheck: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
+  updateDownload: (downloadUrl: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD, downloadUrl),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

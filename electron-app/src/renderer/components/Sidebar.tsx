@@ -38,7 +38,7 @@ const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
       className={`flex flex-col items-center border-r border-gray-700/50 transition-all duration-200 flex-shrink-0 ${
         expanded ? 'w-32 py-4 gap-2' : 'w-16 py-4 gap-2'
       }`}
-      style={{ backgroundColor: 'var(--bg-secondary)', height: '100vh' }}
+      style={{ backgroundColor: 'var(--bg-secondary)', height: '100%' }}
     >
       {/* Logo + 标题 */}
       <div className={`flex flex-col items-center ${expanded ? 'mb-3 px-2' : 'mb-4 p-2'}`} style={{ color: 'var(--accent)' }}>
@@ -84,7 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
       </div>
 
       {/* 展开/折叠按钮 */}
-      <div className="w-full px-2 mb-12">
+      <div className="w-full px-2">
         <button
           className="flex items-center rounded-lg transition-colors duration-200 w-full text-gray-400 hover:text-white hover:bg-gray-700/30"
           onClick={() => setExpanded(!expanded)}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
 import LogPanel from './components/LogPanel';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -14,6 +15,7 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <div className="flex flex-col h-screen">
+        <TitleBar />
         <div className="flex flex-1 overflow-hidden">
           <Routes>
             <Route element={<Layout />}>

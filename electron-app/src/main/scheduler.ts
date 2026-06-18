@@ -12,15 +12,12 @@ import { IPC_CHANNELS } from '../shared/ipc-channels';
 import path from 'path';
 import { app } from 'electron';
 
-export interface TimeWindow {
-  morningStart: number;  // 默认 1
-  morningEnd: number;    // 默认 7
-  eveningStart: number;  // 默认 17
-  eveningEnd: number;    // 默认 19
+export interface TimeWindowConfig {
+  start: number;
+  end: number;
 }
 
 export interface SchedulerOptions {
-  windows: TimeWindow;
   dataDir?: string;
   onStatusChange?: (status: SchedulerStatus) => void;
 }
@@ -32,27 +29,49 @@ export interface SchedulerStatus {
   nextAction: string | null;
 }
 
-const DEFAULT_WINDOWS: TimeWindow = {
-  morningStart: 1,
-  morningEnd: 7,
-  eveningStart: 17,
-  eveningEnd: 19,
-};
-
 export class SparkScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private pm: PythonManager;
-  private windows: TimeWindow;
   private dataDir: string;
   private lastCheckTime: string | null = null;
   private onStatusChange: ((status: SchedulerStatus) => void) | null = null;
   private notifyingWindows: Set<BrowserWindow> = new Set();
 
-  constructor(options: SchedulerOptions = { windows: DEFAULT_WINDOWS }) {
+  constructor(options: SchedulerOptions = {}) {
     this.pm = new PythonManager();
-    this.windows = options.windows || DEFAULT_WINDOWS;
     this.dataDir = options.dataDir || path.join(app.getPath('userData'), 'data');
     this.onStatusChange = options.onStatusChange || null;
+  }
+
+  /**
+   * 从配置文件读取时间窗口设置
+   */
+  private loadTimeWindows(): { enabled: boolean; windows: TimeWindowConfig[] } {
+    try {
+      const fs = require('fs') as typeof import('fs');
+      const configPath = path.join(this.dataDir, 'spark_config.json');
+      if (!fs.existsSync(configPath)) {
+        return { enabled: false, windows: [] };
+      }
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+      // 新格式
+      if (data.timeWindowsEnabled !== undefined) {
+        return { enabled: data.timeWindowsEnabled, windows: data.timeWindows || [] };
+      }
+
+      // 旧格式兼容
+      const windows: TimeWindowConfig[] = [];
+      if (data.morningStart !== undefined) {
+        windows.push({ start: data.morningStart, end: data.morningEnd ?? 7 });
+      }
+      if (data.eveningStart !== undefined) {
+        windows.push({ start: data.eveningStart, end: data.eveningEnd ?? 19 });
+      }
+      return { enabled: windows.length > 0, windows };
+    } catch {
+      return { enabled: false, windows: [] };
+    }
   }
 
   /**
@@ -91,18 +110,18 @@ export class SparkScheduler {
    * 获取当前时间窗口（北京时间）
    */
   private getCurrentWindow(): string | null {
+    const { enabled, windows } = this.loadTimeWindows();
+    if (!enabled || windows.length === 0) {
+      return 'always';
+    }
     const now = new Date();
-    // 转换为北京时间 (UTC+8)
     const utcHour = now.getUTCHours();
-    const utcMinute = now.getUTCMinutes();
-    // 北京时间 = UTC + 8
     const beijingHour = (utcHour + 8) % 24;
 
-    if (beijingHour >= this.windows.morningStart && beijingHour <= this.windows.morningEnd) {
-      return 'morning';
-    }
-    if (beijingHour >= this.windows.eveningStart && beijingHour <= this.windows.eveningEnd) {
-      return 'evening';
+    for (const win of windows) {
+      if (beijingHour >= win.start && beijingHour <= win.end) {
+        return `${win.start}:00-${win.end}:00`;
+      }
     }
     return null;
   }
@@ -138,17 +157,18 @@ export class SparkScheduler {
     const current = this.getCurrentWindow();
     if (current) return 'now';
 
-    // 计算下次窗口开始时间
-    // 如果当前 < 早间窗口开始 -> 早间窗口
-    if (beijingHour < this.windows.morningStart) {
-      return `明天 ${this.windows.morningStart}:00`;
+    const { enabled, windows } = this.loadTimeWindows();
+    if (!enabled || windows.length === 0) return '全天';
+
+    // 找到下一个窗口
+    const sorted = [...windows].sort((a, b) => a.start - b.start);
+    for (const win of sorted) {
+      if (beijingHour < win.start) {
+        return `今天 ${win.start}:00`;
+      }
     }
-    // 如果当前在早间和傍晚之间 -> 傍晚
-    if (beijingHour < this.windows.eveningStart) {
-      return `今天 ${this.windows.eveningStart}:00`;
-    }
-    // 如果当前 > 傍晚窗口结束 -> 明天早间
-    return `明天 ${this.windows.morningStart}:00`;
+    // 都过了 -> 明天第一个窗口
+    return `明天 ${sorted[0].start}:00`;
   }
 
   /**

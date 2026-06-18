@@ -4,14 +4,31 @@ import path from 'path';
 
 /**
  * 检测可用的 Python 路径.
- * 优先使用已知包含 Playwright 的 Python 3.10，
- * 其次尝试系统默认 python。
+ * 优先顺序：
+ * 1. 打包后 resources/python/python.exe（嵌入式 Python）
+ * 2. 常见 Python 安装路径
+ * 3. 系统 PATH 中的 python
  */
 export function findPythonPath(): string {
-  // 已知的含 Playwright 的 Python 路径
+  // 打包后的嵌入式 Python
+  try {
+    const { app } = require('electron');
+    const bundledPath = path.join(process.resourcesPath ?? '', 'python', 'python.exe');
+    if (fs.existsSync(bundledPath)) {
+      return bundledPath;
+    }
+  } catch {}
+
+  // 常见 Python 安装路径
   const knownPaths = [
-    'C:\\Users\\Yu\\AppData\\Local\\Programs\\Python\\Python310\\python.exe',
-    'D:\\python\\python.exe',
+    'C:\\Python310\\python.exe',
+    'C:\\Python311\\python.exe',
+    'C:\\Python312\\python.exe',
+    'C:\\Python313\\python.exe',
+    `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python310\\python.exe`,
+    `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python311\\python.exe`,
+    `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python312\\python.exe`,
+    `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python313\\python.exe`,
   ];
   for (const p of knownPaths) {
     try {

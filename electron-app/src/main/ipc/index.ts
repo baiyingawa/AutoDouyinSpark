@@ -9,6 +9,7 @@ import { registerFriendsHandlers } from './friends.ipc';
 import { registerSparkHandlers } from './spark.ipc';
 import { registerHistoryHandlers } from './history.ipc';
 import { registerSettingsHandlers } from './settings.ipc';
+import { getAppUpdater } from '../updater';
 
 const pythonManager = new PythonManager();
 const logManager = new LogManager();
@@ -90,6 +91,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.APP_QUIT, async () => {
     app.quit();
     return { success: true };
+  });
+
+  // 自动更新
+  const updater = getAppUpdater();
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, async () => {
+    return await updater.checkForUpdate();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async (_event, downloadUrl: string) => {
+    const { BrowserWindow } = require('electron');
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) return { success: false, error: '未找到窗口' };
+    const ok = await updater.downloadAndInstall(win, downloadUrl);
+    return { success: ok };
   });
 
   // 注册模块化 Handler

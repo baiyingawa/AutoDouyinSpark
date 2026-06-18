@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sparkles, Send, RefreshCw, Flame, Users, Clock, CheckCircle, XCircle, AlertCircle, Info, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import type { SparkSendResult } from '../types/electron';
+import UpdateBanner from '../components/UpdateBanner';
 
 interface SparkStatus {
   success: boolean;
@@ -13,6 +14,7 @@ interface SparkStatus {
   cookieTotal?: number;
   cookieValidCount?: number;
   cookieNames?: string[];
+  avatars?: Record<string, string>;
   lastSend: string | null;
   schedulerRunning: boolean | null;
 }
@@ -26,6 +28,11 @@ const DashboardPage: React.FC = () => {
   const [showCookieInfo, setShowCookieInfo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendResult, setSendResult] = useState<string | null>(null);
+  const [lastSendResult, setLastSendResult] = useState<SparkSendResult | null>(null);
+  // 彩蛋：灰色按钮解锁（用 ref 避免闭包问题）
+  const clickCountRef = useRef(0);
+  const mouseMovedRef = useRef(false);
+  const [unlockText, setUnlockText] = useState('');
 
   // 加载状态
   const loadStatus = useCallback(async () => {
@@ -48,33 +55,69 @@ const DashboardPage: React.FC = () => {
   }, [loadStatus]);
 
   // 发送
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (force = false) => {
     setSending(true);
     setSendResult(null);
     setError(null);
+    // 展开日志
+    window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
     try {
-      const result: SparkSendResult = await window.electronAPI.sparkSend(true);
+      const result: SparkSendResult = await window.electronAPI.sparkSend(force);
       if (result.success) {
         setSendResult(`发送成功！(${result.sentCount} 条)${
           result.failCount > 0 ? `，${result.failCount} 条失败` : ''
         }`);
+        if (result.failCount === 0) {
+          clickCountRef.current = 0;
+          setUnlockText('');
+        }
       } else {
         setSendResult(`发送失败${result.error ? `：${result.error}` : ''}`);
       }
+      setLastSendResult(result);
       await loadStatus();
+      // 发送完成 → 自动收起日志
+      setTimeout(() => window.dispatchEvent(new CustomEvent('log-panel:auto-collapse')), 2000);
     } catch (err) {
       setError(String(err));
     }
     setSending(false);
   }, [loadStatus]);
 
+  // 灰色按钮点击（彩蛋解锁，使用 ref 避免 React 状态闭包问题）
+  const handleGrayClick = useCallback(() => {
+    if (mouseMovedRef.current) {
+      clickCountRef.current = 0;
+      mouseMovedRef.current = false;
+      setUnlockText('');
+      return;
+    }
+    clickCountRef.current += 1;
+    const cnt = clickCountRef.current;
+    if (cnt <= 5) {
+      // 前 5 次：安静计数
+      setUnlockText('');
+    } else if (cnt <= 10) {
+      // 显示倒计时：11-cnt
+      setUnlockText(`点击${11 - cnt}次后解锁`);
+    } else {
+      // >10: 已解锁
+      const confirmed = window.confirm('是否强制给所有人再发一次？');
+      if (confirmed) handleSend(true);
+      clickCountRef.current = 0;
+      setUnlockText('');
+    }
+  }, [handleSend]);
+
   // 刷新天数
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     setError(null);
+    window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
     try {
-      await window.electronAPI.sparkRefreshDays();
+      await window.electronAPI.sparkRefreshDays(true);
       await loadStatus();
+      setTimeout(() => window.dispatchEvent(new CustomEvent('log-panel:auto-collapse')), 2000);
     } catch (err) {
       setError(String(err));
     }
@@ -110,6 +153,9 @@ const DashboardPage: React.FC = () => {
         </div>
       ) : (
         <>
+          {/* 自动更新提示 */}
+          <UpdateBanner />
+
           {/* 错误提示 */}
           {error && (
             <div className="p-3 rounded-lg bg-red-900/30 border border-red-800/50 flex items-start gap-2 mb-4">
@@ -204,8 +250,21 @@ const DashboardPage: React.FC = () => {
                       style={{ backgroundColor: '#1a1a2e' }}
                     >
                       <div className="flex items-center gap-3">
+                        {status?.avatars?.[username] ? (
+                          <img
+                            src={status.avatars[username]}
+                            alt={username}
+                            className="w-8 h-8 rounded-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                              (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                            }}
+                          />
+                        ) : null}
                         <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs"
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs ${
+                            status?.avatars?.[username] ? 'hidden' : ''
+                          }`}
                           style={{ backgroundColor: 'var(--accent)' }}
                         >
                           {username.charAt(0)}
@@ -305,17 +364,32 @@ const DashboardPage: React.FC = () => {
               style={{ backgroundColor: 'var(--bg-secondary)' }}
             >
               <button
-                className="flex-1 px-6 py-3 rounded-lg text-white font-medium transition-all hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ backgroundColor: 'var(--accent)' }}
-                onClick={handleSend}
+                className="flex-1 px-6 py-3 rounded-lg text-white font-medium transition-all duration-300 flex items-center justify-center gap-2"
+                style={{
+                  backgroundColor: status?.sentToday
+                    ? unlockText ? 'var(--accent)' : 'rgba(100, 100, 100, 0.5)'
+                    : 'var(--accent)',
+                  opacity: sending ? 0.5 : 1,
+                  cursor: sending ? 'not-allowed' : 'pointer',
+                }}
+                onClick={sending ? undefined : (
+                  status?.sentToday ? handleGrayClick
+                  : () => handleSend(true)
+                )}
                 disabled={sending}
+                onMouseMove={() => { mouseMovedRef.current = true; }}
               >
                 {sending ? (
                   <RefreshCw size={18} className="animate-spin" />
                 ) : (
                   <Send size={18} />
                 )}
-                <span>{sending ? '发送中...' : '立即发送'}</span>
+                <span>
+                  {sending ? '发送中...'
+                    : unlockText || (lastSendResult?.failCount
+                      ? `重试失败(${lastSendResult.failCount})`
+                      : '立即发送')}
+                </span>
               </button>
 
               <button

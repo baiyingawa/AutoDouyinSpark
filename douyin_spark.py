@@ -40,6 +40,7 @@ LOG_FILE = os.path.join(SCRIPT_DIR, ".spark_log")
 DAYS_CACHE = os.path.join(SCRIPT_DIR, ".spark_days_cache")
 CONFIRM_FILE = os.path.join(SCRIPT_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SCRIPT_DIR, ".spark_login_check")
+AVATARS_FILE = os.path.join(SCRIPT_DIR, ".spark_avatars")
 CHINA_TZ = timezone(timedelta(hours=8))
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
@@ -97,9 +98,30 @@ def get_cookie_valid_status():
         json.dump(result, f)
     return result
 
-# 北京时间窗口（小时）
-MORNING_START, MORNING_END = 1, 7       # 1:00 ~ 7:00（含两端）
-EVENING_START, EVENING_END = 17, 19     # 17:00 ~ 19:00（含两端）
+# 北京时间窗口（小时）- 从配置文件读取，默认全天
+def _load_time_windows():
+    """从配置文件加载时间窗口设置，返回 (enabled, windows)"""
+    enabled = False
+    windows = []
+    try:
+        if os.path.exists(_CONFIG_FILE):
+            with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            # 新格式
+            if "timeWindowsEnabled" in cfg:
+                enabled = cfg.get("timeWindowsEnabled", False)
+                windows = cfg.get("timeWindows", [])
+            # 兼容旧格式
+            elif cfg.get("morningStart") is not None:
+                enabled = True
+                windows = []
+                if cfg.get("morningStart") is not None:
+                    windows.append({"start": cfg["morningStart"], "end": cfg.get("morningEnd", 7)})
+                if cfg.get("eveningStart") is not None:
+                    windows.append({"start": cfg["eveningStart"], "end": cfg.get("eveningEnd", 19)})
+    except:
+        pass
+    return enabled, windows
 
 
 def log(msg):
@@ -157,12 +179,16 @@ def mark_sent():
 
 def in_time_window():
     """判断当前北京时间是否在允许的时间窗口内"""
+    enabled, windows = _load_time_windows()
+    if not enabled or not windows:
+        return "always"  # 全天可发送
     now = datetime.now(CHINA_TZ)
     hour = now.hour
-    if MORNING_START <= hour <= MORNING_END:
-        return "morning"
-    if EVENING_START <= hour <= EVENING_END:
-        return "evening"
+    for win in windows:
+        start = win.get("start", 0)
+        end = win.get("end", 23)
+        if start <= hour <= end:
+            return f"{start}:00-{end}:00"
     return None
 
 
@@ -262,55 +288,70 @@ def send_to_user(page, username, msg):
     # 点击汉堡菜单展开会话列表
     _open_session_list(page)
 
-    # 找目标用户的会话项
+    # 找目标用户的会话项（最多尝试 3 次，找不到就滚动）
     log(f"  🔍 正在查找「{username}」的会话...")
-    items = page.evaluate("""(target) => {
-        const els = document.querySelectorAll('div, span, a, li');
-        const found = [];
-        const seen = new Set();
-        els.forEach(el => {
-            const t = el.textContent.trim();
-            if (t.includes(target) && !seen.has(t) && el.offsetHeight > 0 && el.offsetWidth > 0) {
-                seen.add(t);
-                const r = el.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0) found.push({text: t, x: r.x, y: r.y, w: r.width, h: r.height});
-            }
-        });
-        found.sort((a, b) => a.text.length - b.text.length);
-        return found;
-    }""", username)
-
-    log(f"  📋 找到 {len(items)} 个匹配项")
-    # 对 username 做归一化，用于后续比较
-    clean_username = _clean_text(username)
     clicked = False
-    for item in items:
-        item_text = _clean_text(item['text'])
-        if clean_username in item_text and len(item_text) < len(clean_username) + 20:
-            log(f"  🖱️ 点击: 「{item_text[:30]}」")
-            page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
-            clicked = True
+    clean_username = _clean_text(username)
+    viewport_h = page.viewport_size.get("height", 900) if page.viewport_size else 900
+
+    for scroll_attempt in range(4):  # 初始找 + 最多滚 3 次
+        items = page.evaluate("""(target) => {
+            const els = document.querySelectorAll('div, span, a, li');
+            const found = [];
+            const seen = new Set();
+            els.forEach(el => {
+                const t = el.textContent.trim();
+                if (t.includes(target) && !seen.has(t) && el.offsetHeight > 0 && el.offsetWidth > 0) {
+                    seen.add(t);
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) found.push({text: t, x: r.x, y: r.y, w: r.width, h: r.height});
+                }
+            });
+            found.sort((a, b) => a.text.length - b.text.length);
+            return found;
+        }""", username)
+
+        if scroll_attempt == 0:
+            log(f"  📋 找到 {len(items)} 个匹配项")
+
+        # 尝试点击可见的匹配项
+        for item in items:
+            item_text = _clean_text(item['text'])
+            if clean_username in item_text and len(item_text) < len(clean_username) + 20:
+                # 判断是否在视口内
+                if item['y'] >= 0 and item['y'] + item['h'] <= viewport_h:
+                    log(f"  🖱️ 点击: 「{item_text[:30]}」")
+                    page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
+                    clicked = True
+                    break
+                else:
+                    # 在视口外，尝试滚动
+                    if scroll_attempt < 3:
+                        scroll_px = min(viewport_h * 0.6, 400)  # 滚动 60% 视口高度
+                        page.evaluate(f"window.scrollBy(0, {scroll_px})")
+                        time.sleep(0.5)
+                        log(f"  📜 向下滚动 ({scroll_attempt + 1}/3)")
+                        break  # 跳出 for 循环，重新 evaluate
+        if clicked:
             break
+        if scroll_attempt == 3:
+            # 3 次滚动后还没找到
+            log(f"  🔄 尝试 text= 选择器...")
+            try:
+                page.locator(f'text={username}').first.click(timeout=3000)
+                clicked = True
+            except:
+                pass
 
-    if not clicked:
-        try:
-            log("  🔄 尝试 text= 选择器...")
-            # 使用不带引号的 text= 选择器（Playwright 会做子串匹配，更灵活）
-            page.locator(f'text={username}').first.click(timeout=3000)
-            clicked = True
-        except:
-            pass
-
+    # 输入消息并发送
     if not clicked:
         log(f"❌ 未找到 [{username}]")
         return False
 
-    time.sleep(2)
-
-    # 输入消息并发送
+    time.sleep(1.5)  # 等待聊天界面加载
     try:
         input_el = page.locator('[contenteditable="true"]').first
-        input_el.click(timeout=3000)
+        input_el.click(timeout=10000)
         time.sleep(0.5)
         log(f"  ✏️ 正在输入消息...")
         input_el.type(msg, delay=50)
@@ -322,6 +363,62 @@ def send_to_user(page, username, msg):
     except Exception as e:
         log(f"❌ 发送给 [{username}] 失败: {e}")
         return False
+
+
+def _scrape_avatars(page):
+    """从当前页面（私信列表）抓取用户头像 URL"""
+    try:
+        targets = list(TARGET_USERS)
+        if not targets:
+            return
+        # 先收集所有文本（含坐标），再找头像图片，按坐标邻近匹配
+        data = page.evaluate("""(targetNames) => {
+            // 收集包含目标用户名的文本元素坐标（同 _scrape_spark_days 方式）
+            const namePositions = {};
+            const allEls = document.querySelectorAll('div, span, li');
+            allEls.forEach(el => {
+                const text = (el.textContent || '').trim();
+                for (const name of targetNames) {
+                    if (namePositions[name]) continue;
+                    if (!text.includes(name) || text.length > name.length + 20) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        namePositions[name] = { x: r.x, y: r.y, w: r.width, h: r.height };
+                    }
+                }
+            });
+            // 收集所有 >=40x40 的非图标头像 img 坐标
+            const avatarImgs = [];
+            document.querySelectorAll('img').forEach(img => {
+                const src = img.src || '';
+                if (!src || src.includes('flame') || src.includes('emoji') || src.includes('svg')) return;
+                const r = img.getBoundingClientRect();
+                if (r.width < 40 || r.height < 40) return;
+                avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
+            });
+            // 坐标匹配：找离用户名最近的头像
+            const results = {};
+            for (const [name, pos] of Object.entries(namePositions)) {
+                let best = null, bestDist = Infinity;
+                for (const img of avatarImgs) {
+                    const dist = Math.abs(img.y - pos.y);
+                    if (dist < bestDist && dist < 50) {
+                        bestDist = dist;
+                        best = img.src;
+                    }
+                }
+                if (best) results[name] = best;
+            }
+            return results;
+        }""", targets)
+        if data and len(data) > 0:
+            with open(AVATARS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            log(f"📸 已缓存 {len(data)} 个头像: {list(data.keys())}")
+        else:
+            log(f"⚠️ 未抓到头像（目标: {targets}）")
+    except Exception as e:
+        log(f"⚠️ 抓取头像失败: {e}")
 
 
 def send_messages():
@@ -379,7 +476,10 @@ def send_messages():
             log("❌ 无法点击私信入口")
             browser.close()
             return False
-        time.sleep(3)
+        time.sleep(2)
+        # 抓取头像
+        _scrape_avatars(page)
+        time.sleep(1)
 
         # 4. 逐个发送
         all_ok = True
@@ -566,10 +666,10 @@ def _confirm_spark_check(today, new_days):
         log(f"⏳ 对方尚未续火花（基准: {dict(prev_days)}，最新: {dict(new_days)}），继续检查")
 
 
-def _update_spark_days():
+def _update_spark_days(force=False):
     """单独打开浏览器抓取火花天数，并判断对方是否续了"""
     today = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-    if _should_skip_spark_check(today):
+    if not force and _should_skip_spark_check(today):
         log(f"⏭️ 今日对方续火花已确认，跳过检查")
         return
 
@@ -598,7 +698,12 @@ def _update_spark_days():
                 page.wait_for_selector("text=私信", timeout=25000)
                 page.locator('text=私信').first.click()
                 time.sleep(3)
-                _scrape_spark_days(page)
+                # 先抓头像（默认会话列表已可见，不展开以免切换状态）
+                _scrape_avatars(page)
+                # 再展开列表抓天数
+                _open_session_list(page)
+                time.sleep(1)
+                _scrape_spark_days(page, expand_list=False)
             except Exception as e:
                 log(f"⚠️ 无法进入私信抓取火花天数: {e}")
 
@@ -646,7 +751,7 @@ def main(force=False):
 
     if at_window:
         log(f"🕐 在 {'force' if force else window} 状态，更新火花天数")
-        _update_spark_days()
+        _update_spark_days(force=force)
     else:
         log("⏭️ 不在时间窗口内，跳过火花天数更新")
 
@@ -679,6 +784,6 @@ def main(force=False):
 if __name__ == "__main__":
     force = "--force" in sys.argv
     if "--refresh-days" in sys.argv:
-        _update_spark_days()
+        _update_spark_days(force=force)
     else:
         main(force=force)

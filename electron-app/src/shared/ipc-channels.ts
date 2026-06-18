@@ -55,6 +55,16 @@ export const IPC_CHANNELS = {
   // 通用
   APP_VERSION: 'app:version',
   APP_QUIT: 'app:quit',
+
+  // 窗口控制
+  WINDOW_MINIMIZE: 'window:minimize',
+  WINDOW_MAXIMIZE: 'window:maximize',
+  WINDOW_CLOSE_DIALOG: 'window:close-dialog',
+  WINDOW_IS_MAXIMIZED: 'window:is-maximized',
+
+  // 更新
+  UPDATE_CHECK: 'update:check',
+  UPDATE_DOWNLOAD: 'update:download',
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

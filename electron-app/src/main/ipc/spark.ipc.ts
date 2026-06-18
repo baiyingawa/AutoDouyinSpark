@@ -15,11 +15,12 @@ export function registerSparkHandlers(): void {
         success: result.success === true,
         sentCount: result.sentCount || 0,
         failCount: result.failCount || 0,
+        failedUsers: result.failedUsers || [],
         screenshots: result.screenshots || [],
         message: result.message,
       };
     } catch (err) {
-      return { success: false, sentCount: 0, failCount: 0, screenshots: [], error: String(err) };
+      return { success: false, sentCount: 0, failCount: 0, failedUsers: [], screenshots: [], error: String(err) };
     }
   });
 
@@ -39,6 +40,7 @@ export function registerSparkHandlers(): void {
         cookieTotal: statusResult.cookieTotal || 0,
         cookieValidCount: statusResult.cookieValidCount || 0,
         cookieNames: statusResult.cookieNames || [],
+        avatars: statusResult.avatars || {},
         lastSend: statusResult.lastSend || null,
         schedulerRunning: scheduler.isRunning(),
       };
@@ -57,9 +59,9 @@ export function registerSparkHandlers(): void {
   });
 
   // 刷新火花天数
-  ipcMain.handle(IPC_CHANNELS.SPARK_REFRESH_DAYS, async () => {
+  ipcMain.handle(IPC_CHANNELS.SPARK_REFRESH_DAYS, async (_event, force = false) => {
     try {
-      const result = await pythonEngine.refreshDays();
+      const result = await pythonEngine.refreshDays(!!force);
       return { success: result.success !== false };
     } catch (err) {
       return { success: false, error: String(err) };

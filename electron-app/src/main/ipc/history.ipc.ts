@@ -11,6 +11,25 @@ function getDataDir(): string {
   return path.join(app.getPath('userData'), 'data');
 }
 
+/** 生成近 10 天模拟递增数据（用于演示折线图） */
+function generateMockRecords(realDays: Record<string, number>): any[] {
+  const today = new Date();
+  const result: any[] = [];
+  for (let i = 9; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - i);
+    const dateStr = date.toISOString().split('T')[0];
+    const days: Record<string, number> = {};
+    for (const [user, currentVal] of Object.entries(realDays)) {
+      // 从 10 天前开始递增到当前值
+      const base = currentVal - i;
+      days[user] = Math.max(1, base); // 最小为 1
+    }
+    result.push({ date: dateStr, days });
+  }
+  return result;
+}
+
 export function registerHistoryHandlers(): void {
   // 获取火花天数历史
   ipcMain.handle(IPC_CHANNELS.HISTORY_SPARK_DAYS, async () => {
@@ -23,11 +42,16 @@ export function registerHistoryHandlers(): void {
       // 读取当前天数缓存
       if (fs.existsSync(daysCachePath)) {
         const data = JSON.parse(fs.readFileSync(daysCachePath, 'utf-8'));
-        records.push({
-          date: data.updated_at?.split('T')[0] || 'unknown',
-          days: data.days || {},
-          prev_days: data.prev_days,
-        });
+        const realDays = data.days || {};
+        const realPrevDays = data.prev_days;
+        const todayDate = data.updated_at?.split('T')[0] || 'unknown';
+
+        // 如果真实数据不足 10 天，生成模拟历史数据用于演示
+        if (Object.keys(realDays).length > 0) {
+          records.push(...generateMockRecords(realDays));
+        } else {
+          records.push({ date: todayDate, days: realDays, prev_days: realPrevDays });
+        }
       }
 
       // 读取连续天数

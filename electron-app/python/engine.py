@@ -62,15 +62,15 @@ def _find_original_script(name: str):
 
 
 def _import_douyin_spark():
-    """动态导入 douyin_spark 模块，优先从原始项目路径导入"""
+    """动态导入 douyin_spark 模块"""
     # 先移除当前目录的同名模块缓存
     for k in list(sys.modules.keys()):
         if 'douyin_spark' in k:
             del sys.modules[k]
-    # 确保在 sys.path 中能找到
-    base = os.path.abspath(os.path.join(ENGINE_DIR, ".."))
-    if base not in sys.path:
-        sys.path.insert(0, base)
+    # 确保 ENGINE_DIR 和其父目录都在 sys.path 中
+    for p in [ENGINE_DIR, os.path.abspath(os.path.join(ENGINE_DIR, ".."))]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     # 尝试导入
     try:
         import douyin_spark
@@ -79,7 +79,7 @@ def _import_douyin_spark():
         try:
             import importlib.util
             spec = importlib.util.spec_from_file_location("douyin_spark",
-                os.path.join(base, "douyin_spark.py"))
+                os.path.join(ENGINE_DIR, "douyin_spark.py"))
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
@@ -94,9 +94,9 @@ def _import_email_alert():
     for k in list(sys.modules.keys()):
         if 'email_alert' in k:
             del sys.modules[k]
-    base = os.path.abspath(os.path.join(ENGINE_DIR, ".."))
-    if base not in sys.path:
-        sys.path.insert(0, base)
+    for p in [ENGINE_DIR, os.path.abspath(os.path.join(ENGINE_DIR, ".."))]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     try:
         import email_alert
         return email_alert
@@ -104,7 +104,7 @@ def _import_email_alert():
         try:
             import importlib.util
             spec = importlib.util.spec_from_file_location("email_alert",
-                os.path.join(base, "email_alert.py"))
+                os.path.join(ENGINE_DIR, "email_alert.py"))
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
@@ -223,6 +223,16 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
             pass
 
     # 调度器运行状态（由 Electron 维护，这里返回 None）
+    # 头像缓存
+    avatars_path = os.path.join(data_dir, ".spark_avatars")
+    avatars = {}
+    if os.path.exists(avatars_path):
+        try:
+            with open(avatars_path, "r", encoding="utf-8") as f:
+                avatars = json.load(f)
+        except:
+            pass
+
     result = {
         "success": True,
         "sentToday": sent_today,
@@ -232,6 +242,7 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
         "cookieTotal": cookie_total,
         "cookieValidCount": cookie_valid_count,
         "cookieNames": cookie_names,
+        "avatars": avatars,
         "lastSend": last_send,
         "schedulerRunning": None,
     }
@@ -259,10 +270,14 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         spark.DAYS_CACHE = _get_days_cache_path(data_dir)
     if hasattr(spark, 'LOGIN_CHECK_FILE'):
         spark.LOGIN_CHECK_FILE = _get_login_check_path(data_dir)
+    if hasattr(spark, 'AVATARS_FILE'):
+        spark.AVATARS_FILE = os.path.join(data_dir, ".spark_avatars")
     if hasattr(spark, 'COOKIE_FILE'):
         spark.COOKIE_FILE = _get_cookie_path(data_dir)
     if hasattr(spark, 'LOG_FILE'):
         spark.LOG_FILE = os.path.join(data_dir, ".spark_log")
+    if hasattr(spark, 'AVATARS_FILE'):
+        spark.AVATARS_FILE = os.path.join(data_dir, ".spark_avatars")
     if hasattr(spark, 'CONFIRM_FILE'):
         spark.CONFIRM_FILE = os.path.join(data_dir, ".spark_confirm")
     if hasattr(spark, '_CONFIG_FILE'):
@@ -296,6 +311,40 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
     if os.path.isdir(ss_dir):
         screenshots_before = set(os.listdir(ss_dir))
 
+    # 记录上次失败用户列表
+    prev_failed_path = os.path.join(data_dir, ".spark_failed_users")
+    prev_failed = []
+    if os.path.exists(prev_failed_path):
+        try:
+            with open(prev_failed_path, "r", encoding="utf-8") as f:
+                prev_failed = json.load(f)
+        except:
+            pass
+
+    # 如果 force 不是 True 且有上次失败记录，只发送失败用户
+    if prev_failed and force is not True:
+        # 设置 TARGET_USERS 为上次失败的用户
+        if hasattr(spark, 'TARGET_USERS'):
+            old_users = list(spark.TARGET_USERS)
+            spark.TARGET_USERS = prev_failed
+            if json_mode:
+                print(f"[engine] 🔁 上次 {len(prev_failed)} 人未成功，仅重试这些人", file=sys.stderr)
+
+    sent_users = []
+    failed_users = []
+
+    # Monkey-patch send_to_user to track results
+    _original_send = getattr(spark, 'send_to_user', None)
+    if _original_send:
+        def _tracked_send(page, username, msg):
+            result = _original_send(page, username, msg)
+            if result:
+                sent_users.append(username)
+            else:
+                failed_users.append(username)
+            return result
+        spark.send_to_user = _tracked_send
+
     try:
         spark.main(force=force)
         success = True
@@ -304,21 +353,29 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         if json_mode:
             print(f"[engine] 发送异常: {e}", file=sys.stderr)
 
+    # 保存失败用户列表
+    try:
+        with open(prev_failed_path, "w", encoding="utf-8") as f:
+            json.dump(failed_users, f, ensure_ascii=False)
+    except:
+        pass
+
     # 收集本次截图
     screenshots_after = set(os.listdir(ss_dir)) if os.path.isdir(ss_dir) else set()
     new_screenshots = list(screenshots_after - screenshots_before)
 
     result = {
         "success": success,
-        "sentCount": 1 if success else 0,
-        "failCount": 0,
+        "sentCount": len(sent_users),
+        "failCount": len(failed_users),
+        "failedUsers": failed_users,
         "screenshots": new_screenshots,
     }
     _json_out(result, json_mode)
     return result
 
 
-def action_refresh_days(data_dir: str, json_mode: bool = True) -> dict:
+def action_refresh_days(data_dir: str, force: bool = False, json_mode: bool = True) -> dict:
     """更新火花天数"""
     _ensure_data_dir(data_dir)
     spark = _import_douyin_spark()
@@ -335,6 +392,8 @@ def action_refresh_days(data_dir: str, json_mode: bool = True) -> dict:
         spark.DAYS_CACHE = _get_days_cache_path(data_dir)
     if hasattr(spark, 'LOG_FILE'):
         spark.LOG_FILE = os.path.join(data_dir, ".spark_log")
+    if hasattr(spark, 'AVATARS_FILE'):
+        spark.AVATARS_FILE = os.path.join(data_dir, ".spark_avatars")
     if hasattr(spark, 'CONFIRM_FILE'):
         spark.CONFIRM_FILE = os.path.join(data_dir, ".spark_confirm")
     if hasattr(spark, '_CONFIG_FILE'):
@@ -365,7 +424,7 @@ def action_refresh_days(data_dir: str, json_mode: bool = True) -> dict:
 
     try:
         if hasattr(spark, '_update_spark_days'):
-            spark._update_spark_days()
+            spark._update_spark_days(force=force)
         result = {"success": True}
     except Exception as e:
         result = {"success": False, "error": str(e)}
@@ -459,7 +518,17 @@ def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
     if hasattr(spark, 'LOGIN_CHECK_FILE'):
         spark.LOGIN_CHECK_FILE = _get_login_check_path(data_dir)
     if hasattr(spark, 'HEADLESS'):
-        spark.HEADLESS = False
+        # 读取配置决定是否隐藏浏览器
+        try:
+            _cfg_path = _get_config_path(data_dir)
+            _hide = True
+            if os.path.exists(_cfg_path):
+                with open(_cfg_path, "r", encoding="utf-8") as _f:
+                    _cfg = json.load(_f)
+                    _hide = _cfg.get("hideBrowser", True)
+            spark.HEADLESS = bool(_hide)
+        except Exception:
+            spark.HEADLESS = True
 
     try:
         status_data = spark.get_cookie_valid_status()
@@ -651,6 +720,8 @@ def main():
         elif args.action in ("login-import", "email-test"):
             action_fn(data_dir, json_mode=json_mode)
         elif args.action == "send":
+            action_fn(data_dir, force=args.force, json_mode=json_mode)
+        elif args.action == "refresh-days":
             action_fn(data_dir, force=args.force, json_mode=json_mode)
         elif args.action == "check-playwright":
             action_fn(json_mode=json_mode)
