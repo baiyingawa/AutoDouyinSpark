@@ -5,7 +5,6 @@
   "main": "dist/main/index.js",
   "scripts": {
     "generate-icons": "node scripts/generate-icons.js",
-    "prebuild": "node scripts/generate-icons.js",
     "dev": "vite",
     "build": "tsc && vite build",
     "build:electron": "npm run build && electron-builder --win --x64"
