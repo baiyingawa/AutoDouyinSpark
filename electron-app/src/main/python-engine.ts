@@ -2,8 +2,8 @@
  * PythonEngine - 封装 PythonManager 调用 engine.py
  */
 import path from 'path';
-import { app } from 'electron';
 import { PythonManager, findPythonPath } from './python-manager';
+import { getSharedDataDir } from './shared-data-dir';
 
 const ENGINE_SCRIPT = 'engine.py';
 
@@ -17,8 +17,7 @@ function getEnginePath(): string {
 }
 
 function getDataDir(): string {
-  // 使用 app.getPath('userData') 作为 data-dir
-  return path.join(app.getPath('userData'), 'data');
+  return getSharedDataDir();
 }
 
 function buildArgs(action: string, extra: string[] = []): string[] {

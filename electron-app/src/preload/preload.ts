@@ -73,6 +73,8 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_AUTO_START),
   settingsSetAutoStart: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_AUTO_START, enabled),
+  settingsGetAutoStartPrompted: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_AUTO_START_PROMPTED),
 
   // 发送相关
   sendVideo: () =>

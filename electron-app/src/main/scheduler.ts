@@ -10,7 +10,7 @@ import { BrowserWindow } from 'electron';
 import { PythonManager } from './python-manager';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 import path from 'path';
-import { app } from 'electron';
+import { getSharedDataDir } from './shared-data-dir';
 
 export interface TimeWindowConfig {
   start: number;
@@ -39,7 +39,7 @@ export class SparkScheduler {
 
   constructor(options: SchedulerOptions = {}) {
     this.pm = new PythonManager();
-    this.dataDir = options.dataDir || path.join(app.getPath('userData'), 'data');
+    this.dataDir = options.dataDir || getSharedDataDir();
     this.onStatusChange = options.onStatusChange || null;
   }
 

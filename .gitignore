@@ -22,10 +22,10 @@ __pycache__/
 node_modules/
 dist/
 
-# Electron
-*.log
-
-# IDE
+# Electron 打包输出
+release/
+# 构建输出
+dist/
 .vscode/
 .idea/
 

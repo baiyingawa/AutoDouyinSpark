@@ -3,6 +3,7 @@ import path from 'path';
 import { registerIpcHandlers } from './ipc';
 import { getDefaultScheduler } from './scheduler';
 import { createTray, destroyTray } from './tray';
+import { ensureSparkSchedulerTask } from './task-scheduler';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 
 let mainWindow: BrowserWindow | null = null;
@@ -107,6 +108,7 @@ function registerWindowControlHandlers() {
 }
 
 app.whenReady().then(() => {
+  ensureSparkSchedulerTask();
   registerWindowControlHandlers();
   registerIpcHandlers();
   createWindow();

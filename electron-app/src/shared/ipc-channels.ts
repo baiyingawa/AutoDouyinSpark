@@ -41,6 +41,8 @@ export const IPC_CHANNELS = {
   SETTINGS_TEST_EMAIL: 'settings:test-email',
   SETTINGS_GET_AUTO_START: 'settings:getAutoStart',
   SETTINGS_SET_AUTO_START: 'settings:setAutoStart',
+  SETTINGS_GET_AUTO_START_PROMPTED: 'settings:getAutoStartPrompted',
+  SETTINGS_SET_AUTO_START_PROMPTED: 'settings:setAutoStartPrompted',
 
   // 发送相关
   SEND_VIDEO: 'send:video',

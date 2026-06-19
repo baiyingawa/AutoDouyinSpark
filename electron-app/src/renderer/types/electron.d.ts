@@ -143,6 +143,7 @@ export interface ElectronAPI {
   sendTestEmail: (configJson: string) => Promise<{ success: boolean; sent?: boolean; error?: string }>;
   settingsGetAutoStart: () => Promise<{ success: boolean; enabled: boolean }>;
   settingsSetAutoStart: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+  settingsGetAutoStartPrompted: () => Promise<{ success: boolean; prompted: boolean }>;
 
   // 发送相关
   sendVideo: () => Promise<{ success: boolean; taskId: any }>;

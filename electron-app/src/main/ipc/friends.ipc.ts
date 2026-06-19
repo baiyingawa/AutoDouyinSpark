@@ -4,11 +4,11 @@
 import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
+import { getSharedDataDir } from '../shared-data-dir';
 
 function getConfigPath(): string {
-  const dataDir = path.join(app.getPath('userData'), 'data');
+  const dataDir = getSharedDataDir();
   return path.join(dataDir, 'spark_config.json');
 }
 

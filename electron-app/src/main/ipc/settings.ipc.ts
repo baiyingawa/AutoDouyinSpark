@@ -4,13 +4,13 @@
 import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
-import { isAutoStartEnabled, enableAutoStart, disableAutoStart } from '../auto-launch';
+import { isAutoStartEnabled, enableAutoStart, disableAutoStart, hasAutoStartBeenPrompted } from '../auto-launch';
 import { pythonEngine } from '../python-engine';
+import { getSharedDataDir } from '../shared-data-dir';
 
 function getDataDir(): string {
-  return path.join(app.getPath('userData'), 'data');
+  return getSharedDataDir();
 }
 
 function getEmailConfigPath(): string {
@@ -171,6 +171,15 @@ export function registerSettingsHandlers(): void {
       }
     } catch (err) {
       return { success: false, error: String(err) };
+    }
+  });
+
+  // 获取是否已询问过开机自启
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_AUTO_START_PROMPTED, async () => {
+    try {
+      return { success: true, prompted: hasAutoStartBeenPrompted() };
+    } catch (err) {
+      return { success: false, prompted: false, error: String(err) };
     }
   });
 }

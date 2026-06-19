@@ -12,6 +12,47 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 
+# 自动探测 Playwright Chromium 路径（优先使用已安装的完整版 Chrome）
+def _get_chromium_executable():
+    """返回可用的 Chromium/Chrome 可执行文件路径，或 None（让 Playwright 自动下载）"""
+    import sys
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # 候选的 ms-playwright 根目录（按优先级排序）
+    base_dirs = [
+        # 1. 环境变量指定（用户可自定义）
+        os.environ.get('PLAYWRIGHT_BROWSERS_PATH'),
+        # 2. 标准位置：%LOCALAPPDATA%\ms-playwright
+        os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ms-playwright'),
+        # 3. Linux/macOS 位置
+        os.path.join(os.path.expanduser('~'), '.cache', 'ms-playwright'),
+        # 4. 脚本同目录（打包场景：ms-playwright 随脚本分发）
+        os.path.join(script_dir, 'ms-playwright'),
+        # 5. Python 可执行文件同目录（嵌入式 Python 场景）
+        os.path.join(os.path.dirname(sys.executable), 'ms-playwright'),
+        # 6. Python prefix 下（虚拟环境场景）
+        os.path.join(sys.prefix, 'ms-playwright'),
+    ]
+    # 搜索已有的 chromium 目录（完整版或 headless shell 均可）
+    for base in base_dirs:
+        if not base or not os.path.isdir(base):
+            continue
+        for entry in sorted(os.listdir(base)):
+            if not entry.startswith('chromium'):
+                continue
+            # 完整版 chromium
+            for rel in ('chrome-win64/chrome.exe', 'chrome-win/chrome.exe'):
+                cand = os.path.join(base, entry, rel)
+                if os.path.isfile(cand):
+                    return cand
+            # headless shell
+            for rel in ('chrome-headless-shell-win64/chrome-headless-shell.exe',):
+                cand = os.path.join(base, entry, rel)
+                if os.path.isfile(cand):
+                    return cand
+    return None
+
+CHROMIUM_EXECUTABLE = _get_chromium_executable()
+
 # 可选：Cookie 过期邮件提醒（无配置时静默跳过）
 _EMAIL_ALERT_AVAILABLE = False
 try:
@@ -22,7 +63,35 @@ except ImportError:
 
 # ==== 配置 ====
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_FILE = os.path.join(SCRIPT_DIR, "spark_config.json")
+
+# 统一状态文件路径（所有实例共用）
+SHARED_DATA_DIR = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'AutoDouyinSpark', 'data')
+os.makedirs(SHARED_DATA_DIR, exist_ok=True)
+
+# 迁移旧文件（从 SCRIPT_DIR 到 SHARED_DATA_DIR，仅首次）
+def _migrate_legacy_files(src_dir, dst_dir):
+    """将旧目录中的状态文件复制到新共享目录（不存在时才复制）"""
+    legacy_files = [
+        "spark_config.json", "cookie_export.json",
+        ".spark_state", ".spark_streak", ".spark_log",
+        ".spark_days_cache", ".spark_confirm", ".spark_login_check", ".spark_avatars"
+    ]
+    migrated = False
+    for fname in legacy_files:
+        src = os.path.join(src_dir, fname)
+        dst = os.path.join(dst_dir, fname)
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                import shutil
+                shutil.copy2(src, dst)
+                migrated = True
+            except:
+                pass
+    if migrated:
+        print(f"[migrate] 已迁移旧文件到 {dst_dir}")
+_migrate_legacy_files(SCRIPT_DIR, SHARED_DATA_DIR)
+
+_CONFIG_FILE = os.path.join(SHARED_DATA_DIR, "spark_config.json")
 TARGET_USERS = ["淋雨也走", "酸菜鱼米"]
 if os.path.exists(_CONFIG_FILE):
     try:
@@ -33,14 +102,14 @@ if os.path.exists(_CONFIG_FILE):
                 TARGET_USERS = _users
     except Exception:
         pass
-COOKIE_FILE = os.path.join(SCRIPT_DIR, "cookie_export.json")
-STATE_FILE = os.path.join(SCRIPT_DIR, ".spark_state")
-STREAK_FILE = os.path.join(SCRIPT_DIR, ".spark_streak")
-LOG_FILE = os.path.join(SCRIPT_DIR, ".spark_log")
-DAYS_CACHE = os.path.join(SCRIPT_DIR, ".spark_days_cache")
-CONFIRM_FILE = os.path.join(SCRIPT_DIR, ".spark_confirm")
-LOGIN_CHECK_FILE = os.path.join(SCRIPT_DIR, ".spark_login_check")
-AVATARS_FILE = os.path.join(SCRIPT_DIR, ".spark_avatars")
+COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
+STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
+STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
+LOG_FILE = os.path.join(SHARED_DATA_DIR, ".spark_log")
+DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
+CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
+LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
+AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
 CHINA_TZ = timezone(timedelta(hours=8))
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
@@ -61,7 +130,10 @@ def _check_login_status_playwright():
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=HEADLESS)
+            launch_kwargs = {"headless": HEADLESS}
+            if CHROMIUM_EXECUTABLE:
+                launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(viewport={"width": 1440, "height": 900})
             context.add_cookies(cookies)
             page = context.new_page()
@@ -429,7 +501,10 @@ def send_messages():
         p = _p.__enter__()
         log("🚀 启动 Chromium 浏览器")
         t0 = time.time()
-        browser = p.chromium.launch(headless=HEADLESS)
+        launch_kwargs = {"headless": HEADLESS}
+        if CHROMIUM_EXECUTABLE:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(
             viewport={"width": 1440, "height": 900},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -473,7 +548,7 @@ def send_messages():
             if ok:
                 log(f"✅ [{idx+1}/{len(TARGET_USERS)}] 「{user}」发送成功")
                 # 每个用户发送成功后截图（日期_用户名）
-                ss_dir = os.path.join(SCRIPT_DIR, "screenshots")
+                ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
                 os.makedirs(ss_dir, exist_ok=True)
                 today_str = now.strftime("%Y-%m-%d")
                 ss_user = os.path.join(ss_dir, f"{today_str}_{user}.png")
@@ -644,7 +719,7 @@ def _check_cookie_expiry():
     if not _EMAIL_ALERT_AVAILABLE:
         return
     try:
-        config_file = os.path.join(SCRIPT_DIR, "email_config.json")
+        config_file = os.path.join(SHARED_DATA_DIR, "email_config.json")
         if not os.path.exists(config_file):
             return
         # 实测登录状态
@@ -671,7 +746,9 @@ def _should_skip_spark_check(today):
 
 
 def _init_today_baseline(today):
-    """每天首次运行时，把当前缓存标记为"昨日基准"，后续对比据此判断对方是否续了"""
+    """每天首次运行时，从 spark_days_cache 取出"今日之前最终值"作为基准。
+    优先使用 cache 中的 prev_days（前次变化前的值），
+    如果已初始化过则直接返回已有基准值（不覆盖）。"""
     if os.path.exists(CONFIRM_FILE):
         try:
             with open(CONFIRM_FILE, "r", encoding="utf-8") as f:
@@ -680,12 +757,17 @@ def _init_today_baseline(today):
                 return st.get("prev_days", {})
         except:
             pass
-    # 从缓存取昨天的最终值作为今日基线
+    # 从缓存取"前一次的最终值"作为今日基准
     baseline = {}
     if os.path.exists(DAYS_CACHE):
         try:
             with open(DAYS_CACHE, "r", encoding="utf-8") as f:
-                baseline = json.load(f).get("days", {})
+                cached = json.load(f)
+            # 优先使用 prev_days（变化前的值），更接近"昨日最终值"
+            if "prev_days" in cached and cached["prev_days"]:
+                baseline = cached["prev_days"]
+            else:
+                baseline = cached.get("days", {})
         except:
             pass
     with open(CONFIRM_FILE, "w", encoding="utf-8") as f:
@@ -735,7 +817,10 @@ def _update_spark_days():
         try:
             _p = sync_playwright()
             p = _p.__enter__()
-            browser = p.chromium.launch(headless=HEADLESS)
+            launch_kwargs = {"headless": HEADLESS}
+            if CHROMIUM_EXECUTABLE:
+                launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(
                 viewport={"width": 1440, "height": 900},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -783,6 +868,122 @@ def _update_spark_days():
         log(f"⚠️ 更新火花天数失败: {e}")
 
 
+def _run_spark_session(force=False):
+    """单次浏览器会话：先读天数 → 发消息 → 再读天数确认"""
+    now = datetime.now(CHINA_TZ)
+    msg_template = "[Auto]火花火花！{time}"
+    if os.path.exists(_CONFIG_FILE):
+        try:
+            with open(_CONFIG_FILE, "r", encoding="utf-8") as _f:
+                _cfg = json.load(_f)
+                _tmpl = _cfg.get("message_template", "")
+                if _tmpl:
+                    msg_template = _tmpl
+        except Exception:
+            pass
+    msg = msg_template.replace("{time}", now.strftime("%Y-%m-%d %H:%M:%S"))
+
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    cookies = normalize_cookies(raw, ".douyin.com")
+    log(f"加载了 {len(cookies)} 个 cookie")
+
+    all_ok = False
+    _p = None
+    try:
+        _p = sync_playwright()
+        p = _p.__enter__()
+        log("🚀 启动 Chromium 浏览器")
+        t0 = time.time()
+        launch_kwargs = {"headless": HEADLESS}
+        if CHROMIUM_EXECUTABLE:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+        )
+        context.add_cookies(cookies)
+        page = context.new_page()
+        log(f"✅ 浏览器就绪 ({time.time()-t0:.1f}s)")
+
+        # 先访问主页建立 Cookie/Session，再跳转聊天页
+        log("🌐 正在打开 douyin.com...")
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        _dismiss_trust_dialog(page)
+        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
+
+        log("🌐 跳转到 douyin.com/chat...")
+        page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
+        log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
+        time.sleep(5)
+
+        # 等待页面稳定
+        try:
+            page.wait_for_selector('input[placeholder="搜索"]', timeout=60000)
+            log(f"✅ 搜索框就绪 ({time.time()-t0:.1f}s)")
+        except:
+            log(f"⚠️ 搜索框等待超时，继续... ({time.time()-t0:.1f}s)")
+        time.sleep(3)
+        _dismiss_trust_dialog(page)
+
+        # === Step 1: 抓初始天数 + 确认 ===
+        log("📸 抓取初始火花天数...")
+        _scrape_avatars(page)
+        _open_session_list(page)
+        time.sleep(1)
+        _scrape_spark_days(page, expand_list=False)
+        # 读取刚写入的天数文件，做 _confirm_spark_check
+        if os.path.exists(DAYS_CACHE):
+            try:
+                with open(DAYS_CACHE, "r", encoding="utf-8") as f:
+                    new_days = json.load(f).get("days", {})
+                if new_days:
+                    today = now.strftime("%Y-%m-%d")
+                    _confirm_spark_check(today, new_days)
+            except Exception as e:
+                log(f"⚠️ 初始天数确认异常: {e}")
+
+        # === Step 2: 逐个发送 ===
+        all_ok = True
+        for idx, user in enumerate(TARGET_USERS):
+            log(f"👤 [{idx+1}/{len(TARGET_USERS)}] 正在发送给「{user}」...")
+            time.sleep(1)
+            ok = send_to_user(page, user, msg)
+            if ok:
+                log(f"✅ [{idx+1}/{len(TARGET_USERS)}] 「{user}」发送成功")
+                ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+                os.makedirs(ss_dir, exist_ok=True)
+                today_str = now.strftime("%Y-%m-%d")
+                page.screenshot(path=os.path.join(ss_dir, f"{today_str}_{user}.png"))
+                log(f"📸 火花截图已保存: {today_str}_{user}.png")
+            if not ok:
+                log(f"❌ [{idx+1}/{len(TARGET_USERS)}] 「{user}」发送失败")
+                all_ok = False
+
+        # === Step 3: 再抓天数（更新后的）===
+        try:
+            _scrape_spark_days(page)
+        except Exception as e:
+            log(f"⚠️ 抓取火花天数失败: {e}")
+
+        # 关闭浏览器
+        try:
+            browser.close()
+        except Exception as e:
+            log(f"⚠️ 关闭浏览器异常: {e}")
+
+        return all_ok
+    finally:
+        if _p is not None:
+            try:
+                _p.__exit__(None, None, None)
+            except:
+                pass
+    return all_ok
+
+
 def main(force=False):
     t_start = time.time()
     now = datetime.now(CHINA_TZ)
@@ -790,40 +991,31 @@ def main(force=False):
     if force:
         log("⚡ 强制发送模式（跳过时间窗口）")
 
-    # === 每日基准初始化（必须在任何更新之前，确保基准是昨天最终数据）===
     today = now.strftime("%Y-%m-%d")
-    _init_today_baseline(today)
 
     # === Cookie 过期检查（每次执行都跑）===
     _check_cookie_expiry()
 
-    # === 在窗口内即使已发送也更新火花天数 ===
-    window = in_time_window()
-    at_window = window is not None or force
-
-    if at_window:
-        log(f"🕐 在 {'force' if force else window} 状态，更新火花天数")
-        _update_spark_days()
-    else:
-        log("⏭️ 不在时间窗口内，跳过火花天数更新")
-
+    # === 已发送则跳过 ===
     if not force and already_sent_today():
         log("⏭️ 今天已经发送过，跳过")
         return
 
-    if not window and not force:
+    # === 检查时间窗口 ===
+    window = in_time_window()
+    at_window = window is not None or force
+
+    if not at_window:
         log("⏭️ 不在允许的时间窗口内，跳过")
         return
 
-    window_text = window if window else "force"
-    log(f"📨 开始发送火花消息...")
-
-    # 发送（异常保护，只要成功发送了就标记状态）
+    # === 单次浏览器会话：抓天数 → 发送 → 再抓天数 ===
+    log(f"🕐 在 {'force' if force else window} 状态，开始火花会话")
     success = False
     try:
-        success = send_messages()
+        success = _run_spark_session(force=force)
     except Exception as e:
-        log(f"❌ 发送过程异常: {e}")
+        log(f"❌ 火花会话异常: {e}")
 
     elapsed = time.time() - t_start
     if success:

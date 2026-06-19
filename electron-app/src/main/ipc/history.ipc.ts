@@ -4,11 +4,11 @@
 import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { app } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
+import { getSharedDataDir } from '../shared-data-dir';
 
 function getDataDir(): string {
-  return path.join(app.getPath('userData'), 'data');
+  return getSharedDataDir();
 }
 
 /** 生成近 10 天模拟递增数据（用于演示折线图） */

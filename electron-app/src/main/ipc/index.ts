@@ -10,13 +10,14 @@ import { registerSparkHandlers } from './spark.ipc';
 import { registerHistoryHandlers } from './history.ipc';
 import { registerSettingsHandlers } from './settings.ipc';
 import { getAppUpdater } from '../updater';
+import { getSharedDataDir } from '../shared-data-dir';
 
 const pythonManager = new PythonManager();
 const logManager = new LogManager();
 
 export function registerIpcHandlers(): void {
   // 用正确的日志路径初始化 LogManager
-  logManager.init(path.join(app.getPath('userData'), 'data', '.spark_log'));
+  logManager.init(path.join(getSharedDataDir(), '.spark_log'));
 
   // Python 子进程管理
   ipcMain.handle(IPC_CHANNELS.PYTHON_EXEC, async (_event, scriptPath: string, args: string[]) => {

@@ -1,17 +1,44 @@
 /**
  * auth.ipc.ts - 登录相关 IPC Handler
+ *
+ * 登录成功后，自动触发：
+ * 1. 确保计划任务已注册
+ * 2. 弹窗询问用户是否开启开机自启（仅首次）
  */
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
+import { ensureSparkSchedulerTask } from '../task-scheduler';
+import { promptAndMaybeEnable } from '../auto-launch';
+
+/**
+ * 登录成功后的统一处理：计划任务 + 开机自启弹窗
+ */
+async function _onLoginSuccess(): Promise<void> {
+  // 1. 确保计划任务已注册
+  ensureSparkSchedulerTask();
+
+  // 2. 弹窗询问开机自启（仅首次登录后触发）
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (win) {
+    // 异步弹窗，不阻塞登录响应
+    promptAndMaybeEnable(win).catch((err) =>
+      console.error('[Auth] 开机自启弹窗异常:', err),
+    );
+  }
+}
 
 export function registerAuthHandlers(): void {
   // 启动网页登录（打开浏览器等待用户登录，自动保存 Cookie）
   ipcMain.handle(IPC_CHANNELS.AUTH_START_QRCODE, async () => {
     try {
       const result = await pythonEngine.loginStart();
+      // 登录成功后确认计划任务
+      if (result.success) {
+        _onLoginSuccess();
+      }
       return {
         success: result.success === true,
         cookieCount: result.cookieCount || 0,
@@ -47,6 +74,10 @@ export function registerAuthHandlers(): void {
 
       // 调用 Python 引擎导入
       const result = await pythonEngine.loginImport(cookieJson);
+      // 导入成功后确认计划任务
+      if (result.success !== false) {
+        _onLoginSuccess();
+      }
       return {
         success: result.success !== false,
         cookieCount: count,
