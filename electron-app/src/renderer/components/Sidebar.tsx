@@ -7,10 +7,10 @@ import {
   History,
   Settings,
   LogIn,
-  Sparkles,
   PanelRightOpen,
   PanelRightClose,
 } from 'lucide-react';
+import logoIcon from '../assets/logo-icon-lg.png';
 
 export interface SidebarNavItem {
   to: string;
@@ -42,7 +42,12 @@ const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
     >
       {/* Logo + 标题 */}
       <div className={`flex flex-col items-center ${expanded ? 'mb-3 px-2' : 'mb-4 p-2'}`} style={{ color: 'var(--accent)' }}>
-        <Sparkles size={expanded ? 36 : 24} />
+        <img
+          src={logoIcon}
+          alt="火花助手"
+          className="rounded"
+          style={{ width: expanded ? 36 : 24, height: expanded ? 36 : 24 }}
+        />
         {expanded && (
           <>
             <span className="text-base font-bold text-white mt-1">火花助手</span>
