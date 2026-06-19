@@ -22,6 +22,10 @@ let tray: Tray | null = null;
 function createTrayIcon(): Electron.NativeImage {
   // 优先尝试加载外部图标文件
   const iconPaths = [
+    // 生产环境: process.resourcesPath
+    path.join(process.resourcesPath, 'resources', 'tray-icon.png'),
+    path.join(process.resourcesPath, 'resources', 'icon.png'),
+    // 开发环境: 相对项目路径
     path.join(__dirname, '..', '..', 'resources', 'tray-icon.png'),
     path.join(__dirname, '..', '..', 'resources', 'icon.png'),
   ];

@@ -12,6 +12,10 @@ extraResources:
     to: python
     filter:
       - "**/*"
+  - from: resources
+    to: resources
+    filter:
+      - "tray-icon.png"
 win:
   target:
     - target: nsis
