@@ -40,6 +40,7 @@ LOG_FILE = os.path.join(SCRIPT_DIR, ".spark_log")
 DAYS_CACHE = os.path.join(SCRIPT_DIR, ".spark_days_cache")
 CONFIRM_FILE = os.path.join(SCRIPT_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SCRIPT_DIR, ".spark_login_check")
+AVATARS_FILE = os.path.join(SCRIPT_DIR, ".spark_avatars")
 CHINA_TZ = timezone(timedelta(hours=8))
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
@@ -437,8 +438,14 @@ def send_messages():
         page = context.new_page()
         log(f"✅ 浏览器就绪 ({time.time()-t0:.1f}s)")
 
-        # 1. 打开聊天页面
-        log("🌐 正在打开 douyin.com/chat...")
+        # 1. 先访问主页建立 Cookie/Session，再跳转聊天页
+        log("🌐 正在打开 douyin.com...")
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        _dismiss_trust_dialog(page)
+        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
+
+        log("🌐 跳转到 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
@@ -453,6 +460,9 @@ def send_messages():
 
         # 3. 关闭信任登录弹窗（如果存在）
         _dismiss_trust_dialog(page)
+        # 抓取头像
+        _scrape_avatars(page)
+        time.sleep(1)
 
         # 4. 逐个发送
         all_ok = True
@@ -560,6 +570,75 @@ def _scrape_spark_days(page, expand_list=True):
         log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
 
 
+def _scrape_avatars(page):
+    """从聊天页面抓取用户头像 URL，按坐标匹配用户名"""
+    try:
+        targets = list(TARGET_USERS)
+        if not targets:
+            return
+        # 等待页面加载出会话列表（确保有头像可抓）
+        try:
+            page.wait_for_selector('img[src*="douyinpic"]', timeout=30000)
+        except:
+            pass
+        time.sleep(2)
+
+        data = page.evaluate("""(targetNames) => {
+            // 1. 收集所有包含用户名的文本位置
+            const nameItems = [];
+            const allEls = document.querySelectorAll('div, span, li, a');
+            allEls.forEach(el => {
+                const text = (el.textContent || '').trim();
+                for (const name of targetNames) {
+                    if (text.includes(name) && text.length < name.length + 50) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0 && r.width < 350) {
+                            nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
+                        }
+                    }
+                }
+            });
+            // 2. 收集头像图片（>=36px）
+            const avatarImgs = [];
+            document.querySelectorAll('img').forEach(img => {
+                const src = img.src || '';
+                if (!src || src.includes('svg')) return;
+                const r = img.getBoundingClientRect();
+                if (r.width < 36 || r.height < 36) return;
+                avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
+            });
+            // 3. 垂直距离匹配
+            const results = {};
+            for (const name of targetNames) {
+                const userItems = nameItems.filter(i => i.name === name);
+                if (userItems.length === 0) continue;
+                let best = null, bestScore = Infinity;
+                for (const pos of userItems) {
+                    for (const img of avatarImgs) {
+                        const vDist = Math.abs(img.y + img.h/2 - (pos.y + pos.h/2));
+                        if (vDist < 100 && vDist < bestScore) {
+                            bestScore = vDist;
+                            best = img.src;
+                        }
+                    }
+                }
+                if (best) results[name] = best;
+            }
+            results['__debug'] = 'names=' + nameItems.length + ' imgs=' + avatarImgs.length;
+            return results;
+        }""", targets)
+        debug_info = data.pop('__debug', '')
+        log(f"  📊 头像扫描: {debug_info}")
+        if data and len(data) > 0:
+            with open(AVATARS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            log(f"📸 已缓存 {len(data)} 个头像: {list(data.keys())}")
+        else:
+            log(f"⚠️ 未抓到头像（目标: {targets}）")
+    except Exception as e:
+        log(f"⚠️ 抓取头像失败: {e}")
+
+
 def _check_cookie_expiry():
     """检查 Cookie 过期情况，必要时发邮件提醒（无配置则静默跳过）"""
     if not _EMAIL_ALERT_AVAILABLE:
@@ -664,6 +743,9 @@ def _update_spark_days():
             context.add_cookies(cookies)
             page = context.new_page()
 
+            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+            time.sleep(3)
+            _dismiss_trust_dialog(page)
             page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
             time.sleep(5)
             try:

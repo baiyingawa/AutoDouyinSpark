@@ -401,51 +401,64 @@ def send_to_user(page, username, msg):
 
 
 def _scrape_avatars(page):
-    """从当前页面（私信列表）抓取用户头像 URL"""
+    """从当前页面（聊天/私信列表）抓取用户头像 URL"""
     try:
         targets = list(TARGET_USERS)
         if not targets:
             return
-        # 先收集所有文本（含坐标），再找头像图片，按坐标邻近匹配
+        # 等待会话列表渲染
+        try:
+            page.wait_for_selector('img[src*="douyinpic"], img[src*="byteimg"]', timeout=30000)
+        except:
+            pass
+        time.sleep(2)
+
         data = page.evaluate("""(targetNames) => {
-            // 收集包含目标用户名的文本元素坐标（同 _scrape_spark_days 方式）
-            const namePositions = {};
-            const allEls = document.querySelectorAll('div, span, li');
+            // 1. 收集所有包含用户名的文本位置（允许重复，取最精确的）
+            const nameItems = [];
+            const allEls = document.querySelectorAll('div, span, li, a');
             allEls.forEach(el => {
                 const text = (el.textContent || '').trim();
                 for (const name of targetNames) {
-                    if (namePositions[name]) continue;
-                    if (!text.includes(name) || text.length > name.length + 20) continue;
-                    const r = el.getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0) {
-                        namePositions[name] = { x: r.x, y: r.y, w: r.width, h: r.height };
+                    if (text.includes(name) && text.length < name.length + 50) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0 && r.width < 350) {
+                            nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
+                        }
                     }
                 }
             });
-            // 收集所有 >=40x40 的非图标头像 img 坐标
+            // 2. 收集头像图片（>=36px）
             const avatarImgs = [];
             document.querySelectorAll('img').forEach(img => {
                 const src = img.src || '';
-                if (!src || src.includes('flame') || src.includes('emoji') || src.includes('svg')) return;
+                if (!src || src.includes('svg')) return;
                 const r = img.getBoundingClientRect();
-                if (r.width < 40 || r.height < 40) return;
+                if (r.width < 36 || r.height < 36) return;
                 avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
             });
-            // 坐标匹配：找离用户名最近的头像
+            // 3. 垂直距离匹配
             const results = {};
-            for (const [name, pos] of Object.entries(namePositions)) {
-                let best = null, bestDist = Infinity;
-                for (const img of avatarImgs) {
-                    const dist = Math.abs(img.y - pos.y);
-                    if (dist < bestDist && dist < 50) {
-                        bestDist = dist;
-                        best = img.src;
+            for (const name of targetNames) {
+                const userItems = nameItems.filter(i => i.name === name);
+                if (userItems.length === 0) continue;
+                let best = null, bestScore = Infinity;
+                for (const pos of userItems) {
+                    for (const img of avatarImgs) {
+                        const vDist = Math.abs(img.y + img.h/2 - (pos.y + pos.h/2));
+                        if (vDist < 100 && vDist < bestScore) {
+                            bestScore = vDist;
+                            best = img.src;
+                        }
                     }
                 }
                 if (best) results[name] = best;
             }
+            results['__debug'] = 'names=' + nameItems.length + ' imgs=' + avatarImgs.length;
             return results;
         }""", targets)
+        debug_info = data.pop('__debug', '')
+        log(f"  📊 头像扫描: {debug_info}")
         if data and len(data) > 0:
             with open(AVATARS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
@@ -492,8 +505,14 @@ def send_messages():
         page = context.new_page()
         log(f"✅ 浏览器就绪 ({time.time()-t0:.1f}s)")
 
-        # 1. 打开聊天页面
-        log("🌐 正在打开 douyin.com/chat...")
+        # 1. 先访问主页建立 Cookie/Session，再跳转聊天页
+        log("🌐 正在打开 douyin.com...")
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(3)
+        _dismiss_trust_dialog(page)
+        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
+
+        log("🌐 跳转到 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
@@ -722,6 +741,9 @@ def _update_spark_days(force=False):
             context.add_cookies(cookies)
             page = context.new_page()
 
+            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+            time.sleep(3)
+            _dismiss_trust_dialog(page)
             page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
             time.sleep(5)
             try:
