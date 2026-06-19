@@ -65,7 +65,7 @@ def _check_login_status_playwright():
             context = browser.new_context(viewport={"width": 1440, "height": 900})
             context.add_cookies(cookies)
             page = context.new_page()
-            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=30000)
             time.sleep(3)
             # 如果 URL 不是 login/passport 并且页面有内容（非空白）则认为有效
             logged_in = "login" not in page.url and "passport" not in page.url
@@ -248,6 +248,21 @@ def _dismiss_trust_dialog(page):
                     return True
     except Exception:
         pass
+
+    # 通用：扫描所有可见的"取消"按钮并点击
+    try:
+        cancel_any = page.locator('button:has-text("取消"), span:has-text("取消"), div:has-text("取消")')
+        for i in range(cancel_any.count()):
+            try:
+                if cancel_any.nth(i).is_visible(timeout=300):
+                    cancel_any.nth(i).click(timeout=1000)
+                    time.sleep(1)
+                    log("✅ 已点击「取消」按钮")
+                    return True
+            except:
+                continue
+    except Exception:
+        pass
     return False
 
 
@@ -284,74 +299,94 @@ def _open_session_list(page):
 
 
 def send_to_user(page, username, msg):
-    """给单个用户发送消息"""
-    # 点击汉堡菜单展开会话列表
-    _open_session_list(page)
+    """给单个用户发送消息 - 优先使用搜索"""
+    log(f"  🔍 正在搜索「{username}」...")
 
-    # 找目标用户的会话项（最多尝试 3 次，找不到就滚动）
-    log(f"  🔍 正在查找「{username}」的会话...")
+    # 1. 用搜索功能查找用户
     clicked = False
-    clean_username = _clean_text(username)
-    viewport_h = page.viewport_size.get("height", 900) if page.viewport_size else 900
-
-    for scroll_attempt in range(4):  # 初始找 + 最多滚 3 次
-        items = page.evaluate("""(target) => {
-            const els = document.querySelectorAll('div, span, a, li');
-            const found = [];
-            const seen = new Set();
-            els.forEach(el => {
-                const t = el.textContent.trim();
-                if (t.includes(target) && !seen.has(t) && el.offsetHeight > 0 && el.offsetWidth > 0) {
-                    seen.add(t);
-                    const r = el.getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0) found.push({text: t, x: r.x, y: r.y, w: r.width, h: r.height});
-                }
-            });
-            found.sort((a, b) => a.text.length - b.text.length);
-            return found;
-        }""", username)
-
-        if scroll_attempt == 0:
-            log(f"  📋 找到 {len(items)} 个匹配项")
-
-        # 尝试点击可见的匹配项
-        for item in items:
-            item_text = _clean_text(item['text'])
-            if clean_username in item_text and len(item_text) < len(clean_username) + 20:
-                # 判断是否在视口内
-                if item['y'] >= 0 and item['y'] + item['h'] <= viewport_h:
-                    log(f"  🖱️ 点击: 「{item_text[:30]}」")
-                    page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
-                    clicked = True
-                    break
-                else:
-                    # 在视口外，尝试滚动
-                    if scroll_attempt < 3:
-                        scroll_px = min(viewport_h * 0.6, 400)  # 滚动 60% 视口高度
-                        page.evaluate(f"window.scrollBy(0, {scroll_px})")
-                        time.sleep(0.5)
-                        log(f"  📜 向下滚动 ({scroll_attempt + 1}/3)")
-                        break  # 跳出 for 循环，重新 evaluate
-        if clicked:
-            break
-        if scroll_attempt == 3:
-            # 3 次滚动后还没找到
-            log(f"  🔄 尝试 text= 选择器...")
+    search_input = None
+    # 等待搜索框出现（页面完全渲染需要时间）
+    try:
+        page.wait_for_selector('input[placeholder="搜索"]', timeout=60000)
+        search_input = page.locator('input[placeholder="搜索"]').first
+        log(f"  ✅ 找到搜索框")
+    except:
+        log(f"  ⚠️ 搜索框未出现，尝试备选选择器")
+        for sel in ['input[type="text"]', 'input:visible']:
             try:
-                page.locator(f'text={username}').first.click(timeout=3000)
-                clicked = True
+                loc = page.locator(sel).first
+                if loc.count() > 0:
+                    search_input = loc
+                    break
+            except:
+                pass
+    if search_input is not None:
+        try:
+            search_input.click(timeout=5000)
+            time.sleep(1)
+            search_input.fill("")
+            time.sleep(0.3)
+            search_input.type(username, delay=50)
+            log(f"  ✏️ 已输入搜索关键词: {username}")
+            time.sleep(2)
+
+            # 点击"发私信"按钮
+            try:
+                send_btn = page.locator('text=发私信').first
+                if send_btn.count() > 0:
+                    send_btn.click(timeout=5000)
+                    log(f"  🖱️ 点击「发私信」")
+                    clicked = True
+                    time.sleep(2)
             except:
                 pass
 
-    # 输入消息并发送
+            if not clicked:
+                try:
+                    result = page.locator(f'text={username}').first
+                    if result.count() > 0:
+                        result.click(timeout=5000)
+                        log(f"  🖱️ 点击用户名: {username}")
+                        clicked = True
+                        time.sleep(2)
+                except:
+                    pass
+
+            if not clicked:
+                items = page.evaluate("""(target) => {
+                    const els = document.querySelectorAll('div, span, a, li');
+                    const results = [];
+                    const seen = new Set();
+                    els.forEach(el => {
+                        const t = el.textContent.trim();
+                        if (t === target && !seen.has(t) && el.offsetHeight > 0) {
+                            seen.add(t);
+                            const r = el.getBoundingClientRect();
+                            results.push({x: r.x, y: r.y, w: r.width, h: r.height});
+                        }
+                    });
+                    return results;
+                }""", username)
+                if items:
+                    item = items[0]
+                    page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
+                    clicked = True
+                    time.sleep(2)
+        except Exception as e:
+            log(f"  ⚠️ 搜索失败: {e}")
+    else:
+        log(f"  ⚠️ 未找到搜索框")
     if not clicked:
-        log(f"❌ 未找到 [{username}]")
+        log(f"  🔄 搜索方式未生效，降级到滚动查找...")
+        clicked = _find_user_by_scroll(page, username)
+    if not clicked:
+        log(f"  ❌ 无法找到「{username}」的会话")
         return False
 
     time.sleep(1.5)  # 等待聊天界面加载
     try:
         input_el = page.locator('[contenteditable="true"]').first
-        input_el.click(timeout=10000)
+        input_el.click(timeout=15000)
         time.sleep(0.5)
         log(f"  ✏️ 正在输入消息...")
         input_el.type(msg, delay=50)
@@ -457,26 +492,22 @@ def send_messages():
         page = context.new_page()
         log(f"✅ 浏览器就绪 ({time.time()-t0:.1f}s)")
 
-        # 1. 打开主页
-        log("🌐 正在打开 douyin.com...")
-        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
+        # 1. 打开聊天页面
+        log("🌐 正在打开 douyin.com/chat...")
+        page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
+        log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
 
-        # 2. 关闭信任登录弹窗（如果存在）
-        _dismiss_trust_dialog(page)
-
-        # 3. 等待私信按钮加载并点击
-        log("📩 等待私信加载并点击...")
+        # 2. 等待页面稳定（首页加载慢，首次要十几秒）
         try:
-            page.wait_for_selector("text=私信", timeout=25000)
-            page.locator('text=私信').first.click()
-            log(f"✅ 已进入私信列表 ({time.time()-t0:.1f}s)")
+            page.wait_for_selector('[contenteditable="true"], .chat-container, [class*="chat"]', timeout=60000)
+            log(f"✅ 聊天界面就绪 ({time.time()-t0:.1f}s)")
         except:
-            log("❌ 无法点击私信入口")
-            browser.close()
-            return False
-        time.sleep(2)
+            log(f"⚠️ 聊天界面等待超时，继续... ({time.time()-t0:.1f}s)")
+        time.sleep(3)
+
+        # 3. 关闭信任登录弹窗（如果存在）
+        _dismiss_trust_dialog(page)
         # 抓取头像
         _scrape_avatars(page)
         time.sleep(1)
@@ -691,13 +722,15 @@ def _update_spark_days(force=False):
             context.add_cookies(cookies)
             page = context.new_page()
 
-            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+            page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
+            time.sleep(5)
+            try:
+                page.wait_for_selector('[contenteditable="true"], .chat-container, [class*="chat"]', timeout=60000)
+            except:
+                pass
             time.sleep(3)
             _dismiss_trust_dialog(page)
             try:
-                page.wait_for_selector("text=私信", timeout=25000)
-                page.locator('text=私信').first.click()
-                time.sleep(3)
                 # 先抓头像（默认会话列表已可见，不展开以免切换状态）
                 _scrape_avatars(page)
                 # 再展开列表抓天数
