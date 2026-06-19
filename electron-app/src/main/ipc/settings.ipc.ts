@@ -5,7 +5,7 @@ import { ipcMain } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
-import { isAutoStartEnabled, enableAutoStart, disableAutoStart, hasAutoStartBeenPrompted } from '../auto-launch';
+import { isAutoStartEnabled, enableAutoStart, disableAutoStart, hasAutoStartBeenPrompted, markAutoStartPrompted } from '../auto-launch';
 import { pythonEngine } from '../python-engine';
 import { getSharedDataDir } from '../shared-data-dir';
 
@@ -180,6 +180,19 @@ export function registerSettingsHandlers(): void {
       return { success: true, prompted: hasAutoStartBeenPrompted() };
     } catch (err) {
       return { success: false, prompted: false, error: String(err) };
+    }
+  });
+
+  // 标记开机自启弹窗已处理（前端用户点击了同意或暂不设置）
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_PROMPT_AUTO_START, async (_event, accepted: boolean) => {
+    try {
+      markAutoStartPrompted();
+      if (accepted) {
+        return { success: enableAutoStart() };
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: String(err) };
     }
   });
 }

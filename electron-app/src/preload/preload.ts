@@ -75,6 +75,12 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_AUTO_START, enabled),
   settingsGetAutoStartPrompted: () =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_AUTO_START_PROMPTED),
+  settingsPromptAutoStart: (accepted: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_PROMPT_AUTO_START, accepted),
+  onPromptAutoStart: (callback: () => void) => {
+    ipcRenderer.on(IPC_CHANNELS.SETTINGS_PROMPT_AUTO_START, callback);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SETTINGS_PROMPT_AUTO_START, callback);
+  },
 
   // 发送相关
   sendVideo: () =>

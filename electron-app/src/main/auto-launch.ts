@@ -6,10 +6,11 @@
  * - isAutoStartEnabled() → 返回是否开启
  * - enableAutoStart()  → 设置开机自启
  * - disableAutoStart() → 取消开机自启
- * - promptAndMaybeEnable(mainWindow) → 首次登录弹窗确认后写入
+ * - shouldPromptAutoStart() → 是否需要向用户询问
+ * - markAutoStartPrompted() → 标记已询问过
  */
 
-import { app, BrowserWindow, dialog } from 'electron';
+import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { getSharedDataDir } from './shared-data-dir';
@@ -113,53 +114,23 @@ export function isAutoStartConfigured(): boolean {
 }
 
 /**
- * 首次登录后弹窗询问用户是否开启开机自启
+ * 是否需要向用户询问开机自启
  *
- * 只有在以下条件同时满足时才弹窗：
+ * 条件：
  * 1. 尚未询问过用户（autoStartPrompted !== true）
  * 2. 开机自启尚未开启（!isAutoStartConfigured()）
  *
- * @param mainWindow 用于弹出对话框的父窗口
- * @returns true=用户同意并已写入, false=用户拒绝或已跳过
+ * 注意：此函数只做判断，实际弹窗由前端 React 组件负责。
  */
-export async function promptAndMaybeEnable(mainWindow: BrowserWindow | null): Promise<boolean> {
-  // 已询问过 → 跳过
-  if (hasAutoStartBeenPrompted()) {
-    return false;
-  }
+export function shouldPromptAutoStart(): boolean {
+  if (hasAutoStartBeenPrompted()) return false;
+  if (isAutoStartConfigured()) return false;
+  return true;
+}
 
-  // 已开启过 → 标记为已询问但不重复弹
-  if (isAutoStartConfigured()) {
-    _patchConfig({ autoStartPrompted: true });
-    return false;
-  }
-
-  // 没有可用窗口 → 标记已询问，跳过
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    _patchConfig({ autoStartPrompted: true });
-    return false;
-  }
-
-  // 弹原生确认对话框
-  const result = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: ['同意开启', '暂不设置'],
-    defaultId: 0,
-    cancelId: 1,
-    title: '开启开机自启',
-    message: '为了自动续火花功能正常运作，AutoDouyinSpark 需要在您登录电脑时自动启动。',
-    detail:
-      '开启后，每次登录电脑时应用会在后台自动运行，确保续火花任务按时执行。\n\n' +
-      '您随时可以在「设置」页面中关闭此功能。',
-  });
-
-  // 标记已询问（无论同意与否，不再重复弹窗）
+/**
+ * 标记已向用户询问过开机自启（写入 spark_config.json）
+ */
+export function markAutoStartPrompted(): void {
   _patchConfig({ autoStartPrompted: true });
-
-  if (result.response === 0) {
-    // 用户同意 → 写入 HKCU\Run
-    return enableAutoStart();
-  }
-
-  return false;
 }

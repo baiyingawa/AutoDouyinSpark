@@ -43,6 +43,7 @@ export const IPC_CHANNELS = {
   SETTINGS_SET_AUTO_START: 'settings:setAutoStart',
   SETTINGS_GET_AUTO_START_PROMPTED: 'settings:getAutoStartPrompted',
   SETTINGS_SET_AUTO_START_PROMPTED: 'settings:setAutoStartPrompted',
+  SETTINGS_PROMPT_AUTO_START: 'settings:promptAutoStart',
 
   // 发送相关
   SEND_VIDEO: 'send:video',

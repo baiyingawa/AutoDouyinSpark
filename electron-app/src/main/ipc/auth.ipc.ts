@@ -3,7 +3,7 @@
  *
  * 登录成功后，自动触发：
  * 1. 确保计划任务已注册
- * 2. 弹窗询问用户是否开启开机自启（仅首次）
+ * 2. 通知前端弹窗询问开机自启（仅首次）
  */
 import { ipcMain, BrowserWindow } from 'electron';
 import fs from 'fs';
@@ -11,22 +11,21 @@ import path from 'path';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
 import { ensureSparkSchedulerTask } from '../task-scheduler';
-import { promptAndMaybeEnable } from '../auto-launch';
+import { shouldPromptAutoStart } from '../auto-launch';
 
 /**
- * 登录成功后的统一处理：计划任务 + 开机自启弹窗
+ * 登录成功后的统一处理：计划任务 + 通知前端开机自启弹窗
  */
-async function _onLoginSuccess(): Promise<void> {
+function _onLoginSuccess(): void {
   // 1. 确保计划任务已注册
   ensureSparkSchedulerTask();
 
-  // 2. 弹窗询问开机自启（仅首次登录后触发）
-  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-  if (win) {
-    // 异步弹窗，不阻塞登录响应
-    promptAndMaybeEnable(win).catch((err) =>
-      console.error('[Auth] 开机自启弹窗异常:', err),
-    );
+  // 2. 通知前端弹窗（仅首次登录后）
+  if (shouldPromptAutoStart()) {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.SETTINGS_PROMPT_AUTO_START);
+    }
   }
 }
 

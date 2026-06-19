@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, Send, RefreshCw, Flame, Users, Clock, CheckCircle, XCircle, AlertCircle, Info, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Sparkles, Send, RefreshCw, Flame, Users, Clock, CheckCircle, XCircle, AlertCircle, Info, X, Loader2 } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 import type { SparkSendResult } from '../types/electron';
 import UpdateBanner from '../components/UpdateBanner';
@@ -21,8 +21,10 @@ interface SparkStatus {
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [status, setStatus] = useState<SparkStatus | null>(null);
   const [sending, setSending] = useState(false);
+  const [forceSendMsg, setForceSendMsg] = useState<string | null>(null); // "发送中" 或结果
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showCookieInfo, setShowCookieInfo] = useState(false);
@@ -51,7 +53,38 @@ const DashboardPage: React.FC = () => {
 
     const handleFriendsChanged = () => loadStatus();
     window.addEventListener('friends-changed', handleFriendsChanged);
-    return () => window.removeEventListener('friends-changed', handleFriendsChanged);
+
+    // 监听来自好友页的强制发送请求
+    const handleForceSend = ((e: CustomEvent) => {
+      setForceSendMsg('发送中...');
+      setSending(true);
+      // 展开日志
+      window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
+      window.electronAPI.sparkSend(true).then(async (result) => {
+        if (result.success) {
+          setForceSendMsg(`✅ 强制发送成功！(${result.sentCount} 条)`);
+        } else {
+          setForceSendMsg(`❌ 强制发送失败${result.error ? `：${result.error}` : ''}`);
+        }
+        setLastSendResult(result);
+        await loadStatus();
+        setTimeout(() => {
+          setForceSendMsg(null);
+          window.dispatchEvent(new CustomEvent('log-panel:auto-collapse'));
+        }, 4000);
+      }).catch((err) => {
+        setForceSendMsg(`❌ 强制发送异常：${String(err)}`);
+        setTimeout(() => setForceSendMsg(null), 4000);
+      }).finally(() => {
+        setSending(false);
+      });
+    }) as EventListener;
+    window.addEventListener('force-send:start', handleForceSend);
+
+    return () => {
+      window.removeEventListener('friends-changed', handleFriendsChanged);
+      window.removeEventListener('force-send:start', handleForceSend);
+    };
   }, [loadStatus]);
 
   // 发送
@@ -101,13 +134,12 @@ const DashboardPage: React.FC = () => {
       // 显示倒计时：11-cnt
       setUnlockText(`点击${11 - cnt}次后解锁`);
     } else {
-      // >10: 已解锁
-      const confirmed = window.confirm('是否强制给所有人再发一次？');
-      if (confirmed) handleSend(true);
+      // >10: 已解锁 → 跳转好友页选择强制发送对象
       clickCountRef.current = 0;
       setUnlockText('');
+      navigate('/friends?mode=force-send');
     }
-  }, [handleSend]);
+  }, [navigate]);
 
   // 刷新天数
   const handleRefresh = useCallback(async () => {
@@ -178,6 +210,32 @@ const DashboardPage: React.FC = () => {
               )}
               <span className={sendResult.includes('成功') ? 'text-green-300 text-sm' : 'text-red-300 text-sm'}>
                 {sendResult}
+              </span>
+            </div>
+          )}
+
+          {/* 强制发送提示条（非弹窗，不需要关闭） */}
+          {forceSendMsg && (
+            <div className={`p-3 rounded-lg flex items-center gap-3 mb-4 ${
+              forceSendMsg.startsWith('✅')
+                ? 'bg-green-900/30 border border-green-800/50'
+                : forceSendMsg.startsWith('❌')
+                ? 'bg-red-900/30 border border-red-800/50'
+                : 'bg-blue-900/30 border border-blue-800/50'
+            }`}>
+              {forceSendMsg.startsWith('发送') ? (
+                <Loader2 size={18} className="animate-spin text-blue-400 shrink-0" />
+              ) : forceSendMsg.startsWith('✅') ? (
+                <CheckCircle size={18} className="text-green-400 shrink-0" />
+              ) : (
+                <XCircle size={18} className="text-red-400 shrink-0" />
+              )}
+              <span className={`text-sm font-medium ${
+                forceSendMsg.startsWith('✅') ? 'text-green-300'
+                : forceSendMsg.startsWith('❌') ? 'text-red-300'
+                : 'text-blue-300'
+              }`}>
+                {forceSendMsg}
               </span>
             </div>
           )}

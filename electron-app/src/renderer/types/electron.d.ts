@@ -144,6 +144,8 @@ export interface ElectronAPI {
   settingsGetAutoStart: () => Promise<{ success: boolean; enabled: boolean }>;
   settingsSetAutoStart: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   settingsGetAutoStartPrompted: () => Promise<{ success: boolean; prompted: boolean }>;
+  settingsPromptAutoStart: (accepted: boolean) => Promise<{ success: boolean; error?: string }>;
+  onPromptAutoStart: (callback: () => void) => () => void;
 
   // 发送相关
   sendVideo: () => Promise<{ success: boolean; taskId: any }>;
