@@ -207,12 +207,9 @@ const FriendsPage: React.FC = () => {
   // 强制发送
   const handleForceSend = useCallback(async () => {
     setSending(true);
-    // 触发 dashboard 的发送逻辑
-    window.dispatchEvent(new CustomEvent('force-send:start', {
-      detail: { users: Array.from(selectedUsers) },
-    }));
-    navigate('/');
-  }, [navigate, selectedUsers]);
+    // navigate 带 state，DashboardPage 挂载后读取 state 触发发送
+    navigate('/', { state: { forceSendTriggered: true } });
+  }, [navigate]);
 
   // 取消
   const handleCancel = useCallback(() => {

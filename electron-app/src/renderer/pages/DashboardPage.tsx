@@ -54,12 +54,22 @@ const DashboardPage: React.FC = () => {
     const handleFriendsChanged = () => loadStatus();
     window.addEventListener('friends-changed', handleFriendsChanged);
 
-    // 监听来自好友页的强制发送请求
-    const handleForceSend = ((e: CustomEvent) => {
+    return () => {
+      window.removeEventListener('friends-changed', handleFriendsChanged);
+    };
+  }, [loadStatus]);
+
+  // 监听来自好友页的强制发送请求（通过 navigate state）
+  useEffect(() => {
+    const state = location.state as { forceSendTriggered?: boolean } | null;
+    if (state?.forceSendTriggered) {
+      // 清除 state，防止刷新重复触发
+      navigate('/', { state: {}, replace: true });
+
       setForceSendMsg('发送中...');
       setSending(true);
-      // 展开日志
       window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
+
       window.electronAPI.sparkSend(true).then(async (result) => {
         if (result.success) {
           setForceSendMsg(`✅ 强制发送成功！(${result.sentCount} 条)`);
@@ -78,14 +88,8 @@ const DashboardPage: React.FC = () => {
       }).finally(() => {
         setSending(false);
       });
-    }) as EventListener;
-    window.addEventListener('force-send:start', handleForceSend);
-
-    return () => {
-      window.removeEventListener('friends-changed', handleFriendsChanged);
-      window.removeEventListener('force-send:start', handleForceSend);
-    };
-  }, [loadStatus]);
+    }
+  }, [location.state, navigate, loadStatus]);
 
   // 发送
   const handleSend = useCallback(async (force = false) => {
