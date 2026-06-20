@@ -96,7 +96,7 @@ const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
           title={expanded ? '折叠侧栏' : '展开侧栏'}
         >
           <div className={`flex items-center w-full ${expanded ? 'px-2 py-1.5 gap-2' : 'p-2 justify-center'}`}>
-            {expanded ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+            {expanded ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
             {expanded && (
               <span className="text-xs font-medium whitespace-nowrap">收起侧栏</span>
             )}

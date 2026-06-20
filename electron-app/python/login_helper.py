@@ -157,6 +157,7 @@ def start_login(data_dir: str) -> dict:
 
     _playwright = None
     browser = None
+    browser_pid = None
     started_at = time.time()
 
     try:
@@ -183,7 +184,6 @@ def start_login(data_dir: str) -> dict:
         page = context.new_page()
 
         # 获取浏览器 PID
-        browser_pid = None
         try:
             if hasattr(browser, 'process') and browser.process:
                 browser_pid = browser.process.pid
