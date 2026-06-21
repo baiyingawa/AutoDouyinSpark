@@ -95,11 +95,14 @@ export class PythonEngine {
 
   // --- 登录 ---
   async loginStart(): Promise<any> {
+    console.log('[PythonEngine] loginStart: pythonPath=', findPythonPath());
+    console.log('[PythonEngine] loginStart: enginePath=', path.resolve(getEnginePath()));
     // 登录可能耗时较长（最多 5 分钟），单独设置超时
     const originalTimeout = this.config.timeout;
     this.config.timeout = 360000; // 6 分钟（比 Python 端 5 分钟超时略长）
     const result = await this.callEngine('login-start');
     this.config.timeout = originalTimeout;
+    console.log('[PythonEngine] loginStart result:', JSON.stringify(result).substring(0, 200));
     return result;
   }
 

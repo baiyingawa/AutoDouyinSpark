@@ -12,6 +12,13 @@ import unicodedata
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 
+
+class LoginExpiredException(Exception):
+    """Cookie 已过期异常——页面检测到「登录后」/「扫码登录」"""
+    pass
+    pass
+
+
 # 自动探测 Playwright Chromium 路径（优先使用已安装的完整版 Chrome）
 def _get_chromium_executable():
     """返回可用的 Chromium/Chrome 可执行文件路径，或 None（让 Playwright 自动下载）"""
@@ -110,13 +117,53 @@ DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
 CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
 AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
+LOCK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_lock")
 CHINA_TZ = timezone(timedelta(hours=8))
+_PID = os.getpid()  # 用于日志标记 + 并发锁
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
 HEADLESS = True
 
 # Cookie 实测检查间隔（秒）— 默认 1 小时
 _COOKIE_CHECK_INTERVAL = 3600
+
+def _acquire_lock(timeout=10):
+    """获取进程互斥锁，防止多个浏览器同时运行"""
+    import time as _time
+    waited = 0
+    while waited < timeout:
+        if os.path.exists(LOCK_FILE):
+            try:
+                with open(LOCK_FILE, "r") as f:
+                    old_pid = int(f.read().strip())
+                os.kill(old_pid, 0)
+                _time.sleep(1)
+                waited += 1
+                continue
+            except (ValueError, PermissionError, NotADirectoryError):
+                os.remove(LOCK_FILE)
+            except OSError:
+                try: os.remove(LOCK_FILE)
+                except: pass
+        try:
+            with open(LOCK_FILE, "w") as f:
+                f.write(str(_PID))
+            return True
+        except: pass
+    return False
+
+
+def _release_lock():
+    """释放进程互斥锁"""
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == _PID:
+                os.remove(LOCK_FILE)
+    except: pass
+
+
 
 
 def _check_login_status_playwright():
@@ -128,9 +175,14 @@ def _check_login_status_playwright():
     except:
         return False
 
+    # 并发锁：避免多个检测实例同时开浏览器
+    if not _acquire_lock():
+        log("⚠️ 已有浏览器在运行，登录检测跳过")
+        return True  # 乐观假设有效，避免阻塞
+
     try:
         with sync_playwright() as p:
-            launch_kwargs = {"headless": HEADLESS}
+            launch_kwargs = {"headless": True}
             if CHROMIUM_EXECUTABLE:
                 launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
             browser = p.chromium.launch(**launch_kwargs)
@@ -138,13 +190,50 @@ def _check_login_status_playwright():
             context.add_cookies(cookies)
             page = context.new_page()
             page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(3)
-            # 如果 URL 不是 login/passport 并且页面有内容（非空白）则认为有效
-            logged_in = "login" not in page.url and "passport" not in page.url
+            time.sleep(5)  # 等待足够时间让登录弹窗渲染
+
+            # 登录状态检测（抖音通常弹窗而非跳转 URL）
+            logged_in = True
+
+            # 1. URL 跳转检测
+            if "login" in page.url or "passport" in page.url:
+                logged_in = False
+
+            # 2. 页面内容检测（登录弹窗/遮罩）
+            if logged_in:
+                body_text = page.locator('body').first.inner_text()
+                if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
+                    logged_in = False
+
+            # 3. 登录弹窗 CSS 元素检测
+            if logged_in:
+                try:
+                    has_login_dialog = page.locator(
+                        '[class*="login-modal"], [class*="login-dialog"], [class*="login-mask"], '
+                        '[class*="loginPanel"], [class*="login-panel"], [class*="LoginModal"], '
+                        'div:has(> [class*="qrcode"]):has-text("扫码"), '
+                        'div:has-text("打开抖音APP扫码")'
+                    ).first
+                    if has_login_dialog.is_visible(timeout=1000):
+                        logged_in = False
+                except:
+                    pass
+
             browser.close()
             return logged_in
     except:
         return False
+    finally:
+        _release_lock()
+
+
+def _invalidate_login_cache():
+    """清除登录状态缓存，强制下次调用做个实测检查"""
+    try:
+        if os.path.exists(LOGIN_CHECK_FILE):
+            os.remove(LOGIN_CHECK_FILE)
+    except:
+        pass
 
 
 def get_cookie_valid_status():
@@ -197,9 +286,9 @@ def _load_time_windows():
 
 
 def log(msg):
-    """写日志文件"""
+    """写日志文件（含 PID 标记，便于区分多实例日志）"""
     now = datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{now}] {msg}"
+    line = f"[{now}] [PID:{_PID}] {msg}"
     # 输出到 stderr（避免与 stdout 的 JSON 结果混合）
     print(line, file=sys.stderr, flush=True)
     try:
@@ -378,17 +467,48 @@ def send_to_user(page, username, msg):
     clicked = False
     search_input = None
     # 等待搜索框出现（页面完全渲染需要时间）
-    try:
-        page.wait_for_selector('input[placeholder="搜索"]', timeout=60000)
-        search_input = page.locator('input[placeholder="搜索"]').first
-        log(f"  ✅ 找到搜索框")
-    except:
-        log(f"  ⚠️ 搜索框未出现，尝试备选选择器")
-        for sel in ['input[type="text"]', 'input:visible']:
+    # 多选择器兜底：抖音可能改 placeholder 文字
+    search_selectors = [
+        'input[placeholder="搜索"]',
+        'input[placeholder*="搜索"]',
+        'input[class*="search"]:visible',
+        'input[class*="search-input"]',
+        'input[data-e2e="search-input"]',
+        '[class*="search"] input:visible',
+        'span[class*="search"] + input',
+    ]
+    found = False
+    for sel in search_selectors:
+        try:
+            page.wait_for_selector(sel, timeout=3000)
+            loc = page.locator(sel).first
+            if loc.count() > 0 and loc.is_visible():
+                search_input = loc
+                log(f"  ✅ 找到搜索框: {sel}")
+                found = True
+                break
+        except:
+            continue
+
+    if not found:
+        # 尝试点击搜索图标来展开搜索输入框
+        log(f"  ⚠️ 搜索框未出现，尝试点击搜索图标...")
+        for icon_sel in ['[class*="search-icon"]', 'svg[class*="search"]', 'span:has(svg):near(:text("搜索"))']:
+            try:
+                icon = page.locator(icon_sel).first
+                if icon.count() > 0:
+                    icon.click(timeout=3000)
+                    time.sleep(1)
+                    break
+            except:
+                pass
+        # 再试查找
+        for sel in ['input:visible[type="text"]', 'input:visible']:
             try:
                 loc = page.locator(sel).first
-                if loc.count() > 0:
+                if loc.count() > 0 and loc.is_visible():
                     search_input = loc
+                    log(f"  ✅ 找到通用输入框: {sel}")
                     break
             except:
                 pass
@@ -449,8 +569,31 @@ def send_to_user(page, username, msg):
     else:
         log(f"  ⚠️ 未找到搜索框")
     if not clicked:
-        log(f"  🔄 搜索方式未生效，降级到滚动查找...")
-        clicked = _find_user_by_scroll(page, username)
+        # 尝试 evaluate 遍历元素找到用户名
+        log(f"  🔄 搜索方式未生效，降级到页面扫描...")
+        try:
+            items = page.evaluate("""(target) => {
+                const els = document.querySelectorAll('div, span, a, li');
+                const results = [];
+                const seen = new Set();
+                els.forEach(el => {
+                    const t = el.textContent.trim();
+                    if (t === target && !seen.has(t) && el.offsetHeight > 0) {
+                        seen.add(t);
+                        const r = el.getBoundingClientRect();
+                        results.push({x: r.x, y: r.y, w: r.width, h: r.height});
+                    }
+                });
+                return results;
+            }""", username)
+            if items:
+                item = items[0]
+                page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
+                log(f"  🖱️ 点击: {username}")
+                clicked = True
+                time.sleep(2)
+        except Exception as e:
+            log(f"  ⚠️ 页面扫描失败: {e}")
     if not clicked:
         log(f"  ❌ 无法找到「{username}」的会话")
         return False
@@ -486,27 +629,28 @@ def _scrape_avatars(page):
         time.sleep(2)
 
         data = page.evaluate("""(targetNames) => {
-            // 1. 收集所有包含用户名的文本位置（允许重复，取最精确的）
+            // 1. 收集所有包含用户名的文本位置（扩大元素类型）
             const nameItems = [];
-            const allEls = document.querySelectorAll('div, span, li, a');
+            const allEls = document.querySelectorAll('div, span, li, a, p, section, h1, h2, h3, h4, h5, h6, button');
             allEls.forEach(el => {
                 const text = (el.textContent || '').trim();
+                if (text.length === 0 || text.length > 200) return;
                 for (const name of targetNames) {
-                    if (text.includes(name) && text.length < name.length + 50) {
+                    if (text.includes(name) && text.length < name.length + 80) {
                         const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0 && r.width < 350) {
+                        if (r.width > 0 && r.height > 0 && r.width < 400) {
                             nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
                         }
                     }
                 }
             });
-            // 2. 收集头像图片（>=36px）
+            // 2. 收集头像图片（>=32px，放宽尺寸限制）
             const avatarImgs = [];
             document.querySelectorAll('img').forEach(img => {
                 const src = img.src || '';
                 if (!src || src.includes('svg')) return;
                 const r = img.getBoundingClientRect();
-                if (r.width < 36 || r.height < 36) return;
+                if (r.width < 32 || r.height < 32 || r.width > 200 || r.height > 200) return;
                 avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
             });
             // 3. 垂直距离匹配
@@ -585,12 +729,37 @@ def send_messages():
         page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
         time.sleep(3)
         _dismiss_trust_dialog(page)
+
+        # === 主页登录过期检测（提前拦截，避免浪费时间）===
+        try:
+            body_text = page.locator('body').first.inner_text()[:500]
+            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
+                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
+                _invalidate_login_cache()
+                raise LoginExpiredException("Cookie 已过期")
+        except LoginExpiredException:
+            raise
+        except Exception:
+            pass
+
         log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
 
         log("🌐 跳转到 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
+
+        # === 登录过期检测 ===
+        try:
+            body_text = page.locator('body').first.inner_text()[:500]
+            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
+                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
+                _invalidate_login_cache()
+                raise LoginExpiredException("Cookie 已过期")
+        except LoginExpiredException:
+            raise
+        except Exception:
+            pass
 
         # 2. 等待页面稳定（首页加载慢，首次要十几秒）
         try:
@@ -915,6 +1084,19 @@ def _run_spark_session(force=False):
         page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
         time.sleep(3)
         _dismiss_trust_dialog(page)
+
+        # === 主页登录过期检测（提前拦截，避免浪费时间）===
+        try:
+            body_text = page.locator('body').first.inner_text()[:500]
+            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
+                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
+                _invalidate_login_cache()
+                raise LoginExpiredException("Cookie 已过期")
+        except LoginExpiredException:
+            raise
+        except Exception:
+            pass
+
         log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
 
         log("🌐 跳转到 douyin.com/chat...")
@@ -922,12 +1104,36 @@ def _run_spark_session(force=False):
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
 
-        # 等待页面稳定
+        # === 登录过期检测 ===
         try:
-            page.wait_for_selector('input[placeholder="搜索"]', timeout=60000)
+            body_text = page.locator('body').first.inner_text()[:500]
+            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
+                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
+                _invalidate_login_cache()
+                raise LoginExpiredException("Cookie 已过期")
+        except LoginExpiredException:
+            raise
+        except Exception:
+            pass
+
+        # 等待页面稳定（多选择器兜底，5 秒超时）
+        try:
+            sel = page.locator('input[placeholder*="搜索"],input[class*="search"],input[aria-label*="搜索"]').first
+            sel.wait_for(state="visible", timeout=5000)
             log(f"✅ 搜索框就绪 ({time.time()-t0:.1f}s)")
         except:
             log(f"⚠️ 搜索框等待超时，继续... ({time.time()-t0:.1f}s)")
+            # 搜索框没出来 → 很可能登录过期，再查一次页面文本
+            try:
+                body_text = page.locator('body').first.inner_text()[:1000]
+                if '登录' in body_text and ('后' in body_text or '扫码' in body_text):
+                    log("🔒 Cookie 已过期！搜索框未出现且页面有登录提示")
+                    _invalidate_login_cache()
+                    raise LoginExpiredException("Cookie 已过期（搜索框未加载）")
+            except LoginExpiredException:
+                raise
+            except Exception:
+                pass
         time.sleep(3)
         _dismiss_trust_dialog(page)
 
@@ -988,44 +1194,59 @@ def _run_spark_session(force=False):
 
 
 def main(force=False):
-    t_start = time.time()
-    now = datetime.now(CHINA_TZ)
-    log(f"脚本启动，当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    if force:
-        log("⚡ 强制发送模式（跳过时间窗口）")
-
-    today = now.strftime("%Y-%m-%d")
-
-    # === Cookie 过期检查（每次执行都跑）===
-    _check_cookie_expiry()
-
-    # === 已发送则跳过 ===
-    if not force and already_sent_today():
-        log("⏭️ 今天已经发送过，跳过")
+    # === 快速检查：没有 Cookie 文件就跳过（不开浏览器） ===
+    if not os.path.exists(COOKIE_FILE):
+        log("⚠️ 未检测到 Cookie 文件，请先登录后再试")
         return
 
-    # === 检查时间窗口 ===
-    window = in_time_window()
-    at_window = window is not None or force
-
-    if not at_window:
-        log("⏭️ 不在允许的时间窗口内，跳过")
+    # === 并发互斥锁 ===
+    if not _acquire_lock():
+        log("⚠️ 已有另一个火花会话正在运行（锁文件被占用），跳过本次执行")
         return
 
-    # === 单次浏览器会话：抓天数 → 发送 → 再抓天数 ===
-    log(f"🕐 在 {'force' if force else window} 状态，开始火花会话")
-    success = False
     try:
-        success = _run_spark_session(force=force)
-    except Exception as e:
-        log(f"❌ 火花会话异常: {e}")
+        t_start = time.time()
+        now = datetime.now(CHINA_TZ)
+        log(f"脚本启动，当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        if force:
+            log("⚡ 强制发送模式（跳过时间窗口）")
 
-    elapsed = time.time() - t_start
-    if success:
-        mark_sent()
-        log(f"🎉 全部发送成功，耗时 {elapsed:.0f}s，状态已记录")
-    else:
-        log(f"❌ 部分发送失败，耗时 {elapsed:.0f}s，状态未记录")
+        today = now.strftime("%Y-%m-%d")
+
+        # === Cookie 过期检查（每次执行都跑）===
+        _check_cookie_expiry()
+
+        # === 已发送则跳过 ===
+        if not force and already_sent_today():
+            log("⏭️ 今天已经发送过，跳过")
+            return
+
+        # === 检查时间窗口 ===
+        window = in_time_window()
+        at_window = window is not None or force
+
+        if not at_window:
+            log("⏭️ 不在允许的时间窗口内，跳过")
+            return
+
+        # === 单次浏览器会话：抓天数 → 发送 → 再抓天数 ===
+        log(f"🕐 在 {'force' if force else window} 状态，开始火花会话")
+        success = False
+        try:
+            success = _run_spark_session(force=force)
+        except LoginExpiredException:
+            log("🔒 Cookie 已过期，请重新登录后再试")
+        except Exception as e:
+            log(f"❌ 火花会话异常: {e}")
+
+        elapsed = time.time() - t_start
+        if success:
+            mark_sent()
+            log(f"🎉 全部发送成功，耗时 {elapsed:.0f}s，状态已记录")
+        else:
+            log(f"❌ 部分发送失败，耗时 {elapsed:.0f}s，状态未记录")
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":

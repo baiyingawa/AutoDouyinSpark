@@ -112,6 +112,7 @@ export interface ElectronAPI {
   authImportCookie: (cookieJson: string) => Promise<{ success: boolean; cookieCount?: number; error?: string }>;
   authCheckStatus: () => Promise<LoginCheckResult>;
   authLogout: () => Promise<{ success: boolean }>;
+  onLoginExpired: (callback: () => void) => () => void;
 
   // Cookie 管理
   cookieEncrypt: (text: string, secret: string) => Promise<{ success: boolean; data?: string; error?: string }>;

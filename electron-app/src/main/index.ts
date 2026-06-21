@@ -1,9 +1,11 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { registerIpcHandlers } from './ipc';
 import { getDefaultScheduler } from './scheduler';
 import { createTray, destroyTray } from './tray';
 import { ensureSparkSchedulerTask } from './task-scheduler';
+import { getSharedDataDir } from './shared-data-dir';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 
 let mainWindow: BrowserWindow | null = null;
@@ -108,6 +110,12 @@ function registerWindowControlHandlers() {
 }
 
 app.whenReady().then(() => {
+  // 清除登录状态缓存，确保启动时做实测检查
+  try {
+    const loginCheckFile = path.join(getSharedDataDir(), '.spark_login_check');
+    if (fs.existsSync(loginCheckFile)) fs.unlinkSync(loginCheckFile);
+  } catch {}
+
   ensureSparkSchedulerTask();
   registerWindowControlHandlers();
   registerIpcHandlers();

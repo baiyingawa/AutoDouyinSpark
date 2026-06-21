@@ -91,9 +91,16 @@ export function registerAuthHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.AUTH_CHECK_STATUS, async () => {
     try {
       const result = await pythonEngine.checkLogin();
+      const valid = result.valid === true;
+      // 登录过期时通知所有前端窗口
+      if (!valid) {
+        BrowserWindow.getAllWindows().forEach((w) => {
+          w.webContents.send(IPC_CHANNELS.AUTH_LOGIN_EXPIRED);
+        });
+      }
       return {
         success: true,
-        valid: result.valid === true,
+        valid,
         checkedAt: result.checkedAt || new Date().toISOString(),
       };
     } catch (err) {

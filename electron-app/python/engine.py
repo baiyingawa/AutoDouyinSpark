@@ -197,9 +197,32 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
         except Exception:
             pass
 
-    # Cookie 有效性
+    # Cookie 有效性（默认 false，仅当有实测缓存且 valid=true 时才返回 true）
     cookie_path = _get_cookie_path(data_dir)
-    cookie_valid = os.path.exists(cookie_path)
+    cookie_valid = False
+    if os.path.exists(cookie_path):
+        login_check_path = _get_login_check_path(data_dir)
+        if os.path.exists(login_check_path):
+            try:
+                with open(login_check_path, "r", encoding="utf-8") as _f:
+                    _st = json.load(_f)
+                # 只有缓存明确说 valid 才认为有效
+                if _st.get("valid") is True:
+                    # 且缓存不能超过 1 小时
+                    checked_at = _st.get("checked_at", "")
+                    if checked_at:
+                        try:
+                            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                            check_time = _dt.fromisoformat(checked_at)
+                            now = _dt.now(_tz.utc)
+                            if (now - check_time).total_seconds() < 3600:
+                                cookie_valid = True
+                        except Exception:
+                            cookie_valid = True  # 无法解析时间，乐观信任
+                    else:
+                        cookie_valid = True
+            except Exception:
+                pass
     cookie_total = 0
     cookie_valid_count = 0
     cookie_names = []
@@ -447,6 +470,15 @@ def action_login_start(data_dir: str, json_mode: bool = True) -> dict:
             "browserPid": result_data.get("browserPid"),
             "error": result_data.get("error"),
         }
+        # 登录成功后写入缓存，避免下次 authCheckStatus 再开浏览器
+        if result["success"] and result["cookieCount"] > 0:
+            login_check_path = _get_login_check_path(data_dir)
+            try:
+                import json as _json2
+                with open(login_check_path, "w", encoding="utf-8") as _f:
+                    _json2.dump({"valid": True, "checked_at": datetime.now(CHINA_TZ).isoformat()}, _f)
+            except Exception:
+                pass
     except ImportError as e:
         result = {"success": False, "error": f"login_helper 模块导入失败: {e}"}
     except Exception as e:

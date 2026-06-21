@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface SparkStatus {
   success: boolean;
@@ -13,6 +14,7 @@ interface SparkStatus {
 
 const StatusBar: React.FC = () => {
   const [status, setStatus] = useState<SparkStatus | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const loadStatus = async () => {
@@ -26,8 +28,18 @@ const StatusBar: React.FC = () => {
     loadStatus();
     // 每 30 秒刷新一次
     const timer = setInterval(loadStatus, 30000);
-    return () => clearInterval(timer);
-  }, []);
+
+    // 监听登录过期事件，强制跳转登录页
+    const cleanupExpired = window.electronAPI.onLoginExpired(() => {
+      setStatus((prev) => prev ? { ...prev, cookieValid: false } : null);
+      navigate('/login', { replace: true });
+    });
+
+    return () => {
+      clearInterval(timer);
+      cleanupExpired();
+    };
+  }, [navigate]);
 
   const isLoggedIn = status?.cookieValid === true;
 
