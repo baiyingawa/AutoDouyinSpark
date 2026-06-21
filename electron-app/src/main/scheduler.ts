@@ -172,6 +172,24 @@ export class SparkScheduler {
   }
 
   /**
+   * 检测到登录过期时：弹窗 + 切到登录页
+   */
+  private _bringToFrontAndShowLogin(): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (!win.isDestroyed()) {
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+          win.webContents.send(IPC_CHANNELS.AUTH_LOGIN_EXPIRED);
+        }
+      } catch {
+        // 忽略已关闭窗口的错误
+      }
+    }
+  }
+
+  /**
    * 执行一次检查
    */
   async checkAndExecute(): Promise<void> {
@@ -213,6 +231,7 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'login_invalid',
         });
+        this._bringToFrontAndShowLogin();
         return;
       }
 
@@ -227,6 +246,7 @@ export class SparkScheduler {
             lastCheck: this.lastCheckTime,
             nextAction: 'login_check_stale',
           });
+          this._bringToFrontAndShowLogin();
           return;
         }
       }
