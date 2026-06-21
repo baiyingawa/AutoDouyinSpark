@@ -13,6 +13,21 @@ let mainWindow: BrowserWindow | null = null;
 // isQuitting 标记用于拦截关闭事件
 let isQuitting = false;
 
+// === 防止多开：第二个实例切到前台 ===
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+// ===============================
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -110,12 +125,8 @@ function registerWindowControlHandlers() {
 }
 
 app.whenReady().then(() => {
-  // 清除登录状态缓存，确保启动时做实测检查
-  try {
-    const loginCheckFile = path.join(getSharedDataDir(), '.spark_login_check');
-    if (fs.existsSync(loginCheckFile)) fs.unlinkSync(loginCheckFile);
-  } catch {}
-
+  // 不再强制清除登录状态缓存，由 cache 自身 1 小时过期机制处理
+  // 这样重启应用后能直接使用缓存，不需要重新登录
   ensureSparkSchedulerTask();
   registerWindowControlHandlers();
   registerIpcHandlers();
