@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   AUTH_IMPORT_COOKIE: 'auth:import-cookie',
   AUTH_CHECK_STATUS: 'auth:check-status',
   AUTH_LOGOUT: 'auth:logout',
+  AUTH_LOGIN_EXPIRED: 'auth:login-expired',
 
   // Cookie 管理
   COOKIE_ENCRYPT: 'cookie:encrypt',

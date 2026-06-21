@@ -29,10 +29,23 @@ import subprocess
 import sys
 from datetime import datetime
 
-# 调试日志（输出到 stderr，会被 Electron 捕获）
+# 调试日志（同时输出到 stderr + 火花日志文件）
 def _log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[login_helper][{ts}] {msg}", file=sys.stderr, flush=True)
+    line = f"[login_helper][{ts}] {msg}"
+    print(line, file=sys.stderr, flush=True)
+    # 也写入 spark log，方便前端查看
+    try:
+        import os as _log_os
+        log_dir = os.environ.get("SHARED_DATA_DIR", os.path.join(os.environ.get("APPDATA", ""), "AutoDouyinSpark", "data"))
+        log_path = os.path.join(log_dir, ".spark_log")
+        _log_os.makedirs(log_dir, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as _lf:
+            from datetime import datetime as _dt
+            ts_full = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            _lf.write(f"[{ts_full}] {line}\n")
+    except Exception:
+        pass
 
 try:
     from playwright.sync_api import sync_playwright
@@ -56,11 +69,13 @@ _LOGIN_COOKIE_MARKERS = [
 
 
 def _save_cookies_from_context(context, cookie_path: str) -> int:
-    """从浏览器 context 导出 cookie 并保存到文件"""
+    """从浏览器 context 导出 cookie 并保存到文件（调用方已通过 _is_logged_in 验证）"""
     try:
         cookies = context.cookies()
-        # 仅当存在登录标志 Cookie 时才保存
-        if not _has_login_markers(cookies):
+        cookie_count = len(cookies)
+        # 至少需要 5 条 cookie 才认为有效（防御性检查）
+        if cookie_count < 5:
+            _log(f"Cookie 数量过少（{cookie_count} < 5），跳过保存")
             return 0
 
         # 转换成 douyin_spark 兼容格式
@@ -145,15 +160,25 @@ def start_login(data_dir: str) -> dict:
     - 登录成功后自动保存 Cookie 并关闭浏览器
     - 返回 { success, cookieCount, browserPid, loginMethod, error }
     """
+    _log(f"===== start_login 开始, data_dir={data_dir} =====")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        _log("❌ Playwright 导入失败！")
         return {"success": False, "error": "Playwright 未安装，请先运行 pip install playwright && playwright install chromium"}
 
     os.makedirs(data_dir, exist_ok=True)
     pid_file = os.path.join(data_dir, _BROWSER_PID_FILE)
     cookie_path = os.path.join(data_dir, "cookie_export.json")
     abort_login(data_dir)
+
+    # 清除旧 Cookie 文件，防止合并时保留过期数据
+    if os.path.exists(cookie_path):
+        try:
+            os.remove(cookie_path)
+            _log("已清除旧 Cookie 文件")
+        except Exception:
+            pass
 
     _playwright = None
     browser = None
@@ -162,7 +187,9 @@ def start_login(data_dir: str) -> dict:
 
     try:
         _playwright = sync_playwright()
+        _log("Playwright 已初始化，准备启动浏览器...")
         p = _playwright.__enter__()
+        _log("Playwright context 已进入")
 
         # 启动可见浏览器
         browser = p.chromium.launch(
@@ -212,8 +239,17 @@ def start_login(data_dir: str) -> dict:
         if not nav_ok:
             raise Exception("无法访问抖音，请检查网络连接")
 
+        # 清除可能残留的旧 Cookie（Playwright 浏览器可能复用缓存）
+        context.clear_cookies()
+        _log("已清除浏览器缓存 Cookie，等待用户登录...")
+
+        # 等待页面加载完成，避免旧缓存 cookie 导致误判
+        time.sleep(3)
+
         # ===== 阻塞等待登录 =====
-        _log("浏览器已打开，等待用户登录...")
+        _log("浏览器已打开，等待页面加载...")
+        time.sleep(5)  # 等待页面加载完成，避免旧缓存 cookie 导致误判
+        _log("开始检测登录状态...")
         while True:
             elapsed = time.time() - started_at
             if elapsed > _LOGIN_TIMEOUT:

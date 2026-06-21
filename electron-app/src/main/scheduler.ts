@@ -176,9 +176,66 @@ export class SparkScheduler {
    */
   async checkAndExecute(): Promise<void> {
     this.lastCheckTime = new Date().toISOString();
-    const currentWindow = this.getCurrentWindow();
+    let currentWindow: string | null = null;  // 外层作用域
+
+    // 先快速检查 Cookie 文件是否存在（不开浏览器）
+    try {
+      const fs = await import('fs');
+      const cookieFile = path.join(this.dataDir, 'cookie_export.json');
+      if (!fs.existsSync(cookieFile)) {
+        this.broadcastStatus({
+          running: this.isRunning(),
+          currentWindow: null,
+          lastCheck: this.lastCheckTime,
+          nextAction: 'no_cookie',
+        });
+        return;
+      }
+
+      // 检查缓存的登录状态（必须有且为 valid=true 才继续）
+      const loginCheckFile = path.join(this.dataDir, '.spark_login_check');
+      if (!fs.existsSync(loginCheckFile)) {
+        // 没有缓存 → 还没做过实测检查 → 跳过，等前端触发检查
+        this.broadcastStatus({
+          running: this.isRunning(),
+          currentWindow: null,
+          lastCheck: this.lastCheckTime,
+          nextAction: 'no_login_check',
+        });
+        return;
+      }
+
+      const cached = JSON.parse(fs.readFileSync(loginCheckFile, 'utf-8'));
+      if (cached.valid !== true) {
+        this.broadcastStatus({
+          running: this.isRunning(),
+          currentWindow: null,
+          lastCheck: this.lastCheckTime,
+          nextAction: 'login_invalid',
+        });
+        return;
+      }
+
+      // 检查缓存是否过期（> 1 小时）
+      if (cached.checked_at) {
+        const checkedAt = new Date(cached.checked_at).getTime();
+        const oneHour = 60 * 60 * 1000;
+        if (Date.now() - checkedAt > oneHour) {
+          this.broadcastStatus({
+            running: this.isRunning(),
+            currentWindow: null,
+            lastCheck: this.lastCheckTime,
+            nextAction: 'login_check_stale',
+          });
+          return;
+        }
+      }
+    } catch {
+      // 文件检查失败，继续尝试
+    }
 
     try {
+      currentWindow = this.getCurrentWindow();
       if (!currentWindow) {
         this.broadcastStatus({
           running: this.isRunning(),
@@ -201,27 +258,10 @@ export class SparkScheduler {
         return;
       }
 
-      // 今日未发送，调用 Python send
+      // 今日未发送，调用 Python send（登录状态已在方法开头检查）
       console.log(`[Scheduler] 时间窗口 ${currentWindow}，开始自动发送...`);
 
-      // 检查登录状态
       const enginePath = this.getEngineScriptPath();
-      const loginCheck = await this.pm.exec(enginePath, [
-        '--data-dir', this.dataDir,
-        '--action', 'check-login',
-        '--json',
-      ], { timeout: 30000 });
-
-      if (loginCheck.success && loginCheck.stdout) {
-        try {
-          const parsed = JSON.parse(loginCheck.stdout);
-          if (parsed.valid === false) {
-            console.error(`[Scheduler] Cookie 无效，跳过自动发送`);
-            return;
-          }
-        } catch {}
-      }
-
       const result = await this.pm.exec(enginePath, [
         '--data-dir', this.dataDir,
         '--action', 'send',

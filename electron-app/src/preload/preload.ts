@@ -21,6 +21,10 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_CHECK_STATUS),
   authLogout: () =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT),
+  onLoginExpired: (callback: () => void) => {
+    ipcRenderer.on(IPC_CHANNELS.AUTH_LOGIN_EXPIRED, callback);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AUTH_LOGIN_EXPIRED, callback);
+  },
 
   // Cookie 管理
   cookieEncrypt: (text: string, secret: string) =>

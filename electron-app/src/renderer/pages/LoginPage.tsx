@@ -47,7 +47,10 @@ const LoginPage: React.FC = () => {
         const result: LoginPollResult = await window.electronAPI.authPollQrcodeStatus();
         if (result.status === 'success') {
           setLoginStatus('success');
-          setSuccessMsg(`登录成功！（${result.cookieCount || 0} 条 Cookie）`);
+          const count = result.cookieCount || 0;
+          if (count > 0) {
+            setSuccessMsg(`登录成功！（${count} 条 Cookie）`);
+          }
           clearInterval(poll);
           loginActiveRef.current = false;
           setTimeout(() => navigate('/'), 1500);
@@ -74,7 +77,10 @@ const LoginPage: React.FC = () => {
           clearInterval(poll);
         } else if (result.status === 'success') {
           setLoginStatus('success');
-          setSuccessMsg(`登录成功！（${result.cookieCount || 0} 条 Cookie）`);
+          const count = result.cookieCount || 0;
+          if (count > 0) {
+            setSuccessMsg(`登录成功！（${count} 条 Cookie）`);
+          }
           clearInterval(poll);
           loginActiveRef.current = false;
           setTimeout(() => navigate('/'), 1500);
@@ -96,9 +102,11 @@ const LoginPage: React.FC = () => {
       const result: LoginQrcodeResult = await window.electronAPI.authStartQrcode();
       if (!mountedRef.current || !loginActiveRef.current) return;
       if (result.success) {
-        setLoginStatus('success');
-        setSuccessMsg(`登录成功！已获取 ${result.cookieCount || 0} 条 Cookie`);
+        // 登录成功，用 start_login 返回的实际 cookieCount
         loginActiveRef.current = false;
+        // 先清除正在进行的轮询
+        setSuccessMsg(`登录成功！（${result.cookieCount || 0} 条 Cookie）`);
+        setLoginStatus('success');
         setTimeout(() => navigate('/'), 1500);
       } else {
         loginActiveRef.current = false;
