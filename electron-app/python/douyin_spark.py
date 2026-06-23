@@ -9,8 +9,24 @@ import os
 import time
 import sys
 import unicodedata
+import ctypes
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
+
+
+def _get_real_appdata():
+    """绕过 Microsoft Store Python 的 APPDATA 虚拟化，始终返回真实 Roaming 路径"""
+    # 优先使用环境变量 SPARK_DATA_DIR（由 Electron 端注入）
+    spark_dir = os.environ.get('SPARK_DATA_DIR')
+    if spark_dir:
+        return os.path.dirname(spark_dir)  # SPARK_DATA_DIR 指向 .../data，取上级
+    # Win32 API: SHGetFolderPathW(CSIDL_APPDATA=26)
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 26, None, 0, buf)
+        return buf.value
+    except Exception:
+        return os.environ.get('APPDATA', os.path.expanduser('~'))
 
 
 class LoginExpiredException(Exception):
@@ -71,7 +87,7 @@ except ImportError:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 统一状态文件路径（所有实例共用）
-SHARED_DATA_DIR = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'AutoDouyinSpark', 'data')
+SHARED_DATA_DIR = os.path.join(_get_real_appdata(), 'AutoDouyinSpark', 'data')
 os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 
 # 迁移旧文件（从 SCRIPT_DIR 到 SHARED_DATA_DIR，仅首次）

@@ -1,3 +1,12 @@
+## v2.4.0 (2026-06-23)
+
+### 🐛 修复
+- Microsoft Store 版 Python 导致 APPDATA 虚拟化，日志/历史记录无法显示
+  - 使用 Win32 API `SHGetFolderPathW(CSIDL_APPDATA)` 绕过 Store 虚拟化
+  - Electron 端注入 `SPARK_DATA_DIR` 环境变量确保路径一致
+  - 自动跳过 WindowsApps 路径的 Python，优先使用标准安装版
+  - 计划任务 VBS 脚本改为通过 `engine.py --data-dir` 调用，统一数据目录
+
 ## v2.3.2 (2026-06-23)
 
 ### 🐛 修复

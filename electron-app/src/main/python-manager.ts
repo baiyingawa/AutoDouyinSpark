@@ -1,6 +1,7 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { getSharedDataDir } from './shared-data-dir';
 
 /**
  * 设置 Playwright 环境变量，确保 Chromium 路径正确。
@@ -74,6 +75,11 @@ export function findPythonPath(): string {
   ];
   for (const p of knownPaths) {
     try {
+      // 跳过 Microsoft Store 版 Python（会导致 APPDATA 虚拟化路径不一致）
+      if (p.includes('WindowsApps')) {
+        console.warn('[PythonManager] 跳过 Microsoft Store 版 Python:', p);
+        continue;
+      }
       if (fs.existsSync(p)) {
         return p;
       }
@@ -81,7 +87,11 @@ export function findPythonPath(): string {
       continue;
     }
   }
-  // 回退到系统默认 python
+  // 回退到系统默认 python（如果路径含 WindowsApps 则排除）
+  try {
+    const which = execSync('where python 2>nul', { encoding: 'utf-8' }).trim().split('\n')[0]?.trim();
+    if (which && !which.includes('WindowsApps')) return which;
+  } catch {}
   return 'python';
 }
 
@@ -119,6 +129,7 @@ export class PythonManager {
         env: {
           ...process.env,
           ...getChromiumEnv(),
+          SPARK_DATA_DIR: getSharedDataDir(),
         },
       });
 
