@@ -1,9 +1,10 @@
-# AutoDouyinSpark v2.3
+# AutoDouyinSpark v2.3.2
 
 抖音自动续火花助手 — Electron 桌面端。  
 通过 Playwright + Cookie 登录，每天自动向好友发送续火花消息，支持 Web 可视化控制面板。
 
 🌐 **官网**: [https://www.uu233.xyz/](https://www.uu233.xyz/)
+🌐 **加速下载**: [https://www.uu233.xyz/api/download-latest.html](https://www.uu233.xyz/api/download-latest.html)
 
 ## 截图
 
@@ -26,7 +27,7 @@
 
 > 💡 如果你只想直接使用，**不需要自己编译**，请从 GitHub Releases 下载安装包：
 
-[⬇️ 下载 AutoDouyinSpark Setup 2.3.0.exe](https://github.com/baiyingawa/AutoDouyinSpark/releases/tag/v2.3.0)
+[⬇️ 加速下载](https://www.uu233.xyz/api/download-latest.html) | [GitHub Releases](https://github.com/baiyingawa/AutoDouyinSpark/releases)
 
 - 下载后双击安装，按提示完成安装
 - 安装后桌面会生成「AutoDouyinSpark」快捷方式

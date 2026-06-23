@@ -15,6 +15,8 @@ import { EventEmitter } from 'events';
 const REPO_OWNER = 'baiyingawa';
 const REPO_NAME = 'AutoDouyinSpark';
 const GITHUB_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+const PROXY_API = `https://www.uu233.xyz/api/gh-proxy.php?path=repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+const PROXY_DOWNLOAD = 'https://www.uu233.xyz/api/dl-proxy.php';
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -28,6 +30,7 @@ export interface UpdateInfo {
 export class AppUpdater extends EventEmitter {
   private updateInfo: UpdateInfo | null = null;
   private checking = false;
+  private usingProxy = false;
 
   /** 获取本地版本号 */
   getCurrentVersion(): string {
@@ -52,14 +55,33 @@ export class AppUpdater extends EventEmitter {
     }
 
     this.checking = true;
+    this.usingProxy = false;
     const currentVersion = this.getCurrentVersion();
 
     try {
-      const releaseData = await this.fetchJson(GITHUB_API);
+      let releaseData;
+      let downloadUrl: string | null;
+
+      try {
+        // 1. 先尝试 GitHub API
+        releaseData = await this.fetchJson(GITHUB_API);
+      } catch {
+        // 2. 失败则走 uu233.xyz 加速源
+        console.warn('[Updater] GitHub API 不可用，尝试加速源...');
+        releaseData = await this.fetchJson(PROXY_API);
+        this.usingProxy = true;
+      }
+
       const latestVersion = (releaseData.tag_name || '').replace(/^v/, '');
-      const downloadUrl = this.findInstallerUrl(releaseData.assets);
+      downloadUrl = this.findInstallerUrl(releaseData.assets);
       const releaseUrl = releaseData.html_url || null;
       const releaseNotes = releaseData.body || null;
+
+      // 3. 走加速源时，下载链接也替换成代理地址
+      if (this.usingProxy && downloadUrl) {
+        const ghPath = downloadUrl.replace('https://github.com/', '');
+        downloadUrl = `${PROXY_DOWNLOAD}?path=${encodeURIComponent(ghPath)}`;
+      }
 
       const hasUpdate = this.compareVersions(latestVersion, currentVersion) > 0;
 
@@ -91,11 +113,18 @@ export class AppUpdater extends EventEmitter {
   /** 下载并打开安装包 */
   async downloadAndInstall(win: BrowserWindow, downloadUrl: string): Promise<boolean> {
     try {
+      // 确保走加速源时也替换下载链接
+      let actualUrl = downloadUrl;
+      if (this.usingProxy && actualUrl.startsWith('https://github.com/')) {
+        const ghPath = actualUrl.replace('https://github.com/', '');
+        actualUrl = `${PROXY_DOWNLOAD}?path=${encodeURIComponent(ghPath)}`;
+      }
+
       const savePath = path.join(app.getPath('downloads'), `AutoDouyinSpark-Update.exe`);
 
       win.webContents.send('update:download-progress', { progress: 0, status: 'downloading' });
 
-      await this.downloadFile(downloadUrl, savePath, (progress) => {
+      await this.downloadFile(actualUrl, savePath, (progress) => {
         win.webContents.send('update:download-progress', { progress, status: 'downloading' });
       });
 
