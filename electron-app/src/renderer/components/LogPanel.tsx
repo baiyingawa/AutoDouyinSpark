@@ -12,6 +12,7 @@ const LogPanel: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoExpanded = useRef(false);
+  const userAtBottom = useRef(true);  // 用户是否在底部（用于判断是否自动滚动）
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -55,12 +56,32 @@ const LogPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [fetchLogs]);
 
-  // 展开或日志更新时自动滚动到最底部（最新日志）
+  // 日志容器滚动事件：检测用户是否在底部
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userAtBottom.current = dist < 24;  // 距底部 24px 以内视为"在看最新日志"
+  }, []);
+
+  // 面板展开时始终滚到底部；日志更新时只在用户未上翻时才自动滚动
+  useEffect(() => {
+    if (collapsed || !scrollRef.current) return;
+    const el = scrollRef.current;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (userAtBottom.current && dist > 4) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [collapsed, logs]);
+
+  // 面板从收起 → 展开时，强制滚到底部
   useEffect(() => {
     if (!collapsed && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      userAtBottom.current = true;
     }
-  }, [collapsed, logs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed]);
 
   // 清空日志
   const handleClear = useCallback(async (e: React.MouseEvent) => {
@@ -123,6 +144,7 @@ const LogPanel: React.FC = () => {
       {!collapsed && (
         <div
           ref={scrollRef}
+          onScroll={handleScroll}
           className="h-32 overflow-auto px-4 pb-2 font-mono text-xs"
         >
           {logs.length === 0 ? (
