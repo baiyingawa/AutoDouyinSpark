@@ -113,9 +113,9 @@ export class AppUpdater extends EventEmitter {
   /** 下载并打开安装包 */
   async downloadAndInstall(win: BrowserWindow, downloadUrl: string): Promise<boolean> {
     try {
-      // 确保走加速源时也替换下载链接
+      // 始终优先走加速源下载，避免 GitHub 直连卡死
       let actualUrl = downloadUrl;
-      if (this.usingProxy && actualUrl.startsWith('https://github.com/')) {
+      if (actualUrl.startsWith('https://github.com/')) {
         const ghPath = actualUrl.replace('https://github.com/', '');
         actualUrl = `${PROXY_DOWNLOAD}?path=${encodeURIComponent(ghPath)}`;
       }
@@ -207,9 +207,8 @@ export class AppUpdater extends EventEmitter {
         let downloaded = 0;
         res.on('data', (chunk: Buffer) => {
           downloaded += chunk.length;
-          if (total > 0) {
-            onProgress(Math.round((downloaded / total) * 100));
-          }
+          const pct = total > 0 ? Math.round((downloaded / total) * 100) : -1;
+          onProgress(pct);  // -1 表示没有总大小，UI 显示已下载量
         });
         res.pipe(file);
         file.on('finish', () => {
