@@ -16,10 +16,6 @@ from playwright.sync_api import sync_playwright
 
 def _get_real_appdata():
     """绕过 Microsoft Store Python 的 APPDATA 虚拟化，始终返回真实 Roaming 路径"""
-    # 优先使用环境变量 SPARK_DATA_DIR（由 Electron 端注入）
-    spark_dir = os.environ.get('SPARK_DATA_DIR')
-    if spark_dir:
-        return os.path.dirname(spark_dir)  # SPARK_DATA_DIR 指向 .../data，取上级
     # Win32 API: SHGetFolderPathW(CSIDL_APPDATA=26)
     try:
         buf = ctypes.create_unicode_buffer(260)

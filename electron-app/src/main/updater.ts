@@ -55,7 +55,7 @@ export class AppUpdater extends EventEmitter {
     }
 
     this.checking = true;
-    this.usingProxy = false;
+    this.usingProxy = true;  // 默认优先走加速源
     const currentVersion = this.getCurrentVersion();
 
     try {
@@ -63,13 +63,13 @@ export class AppUpdater extends EventEmitter {
       let downloadUrl: string | null;
 
       try {
-        // 1. 先尝试 GitHub API
-        releaseData = await this.fetchJson(GITHUB_API);
-      } catch {
-        // 2. 失败则走 uu233.xyz 加速源
-        console.warn('[Updater] GitHub API 不可用，尝试加速源...');
+        // 1. 优先走 uu233.xyz 加速源
         releaseData = await this.fetchJson(PROXY_API);
-        this.usingProxy = true;
+      } catch {
+        // 2. 加速源失败则回退到 GitHub API 直连
+        console.warn('[Updater] 加速源不可用，尝试 GitHub API...');
+        releaseData = await this.fetchJson(GITHUB_API);
+        this.usingProxy = false;
       }
 
       const latestVersion = (releaseData.tag_name || '').replace(/^v/, '');
@@ -77,7 +77,7 @@ export class AppUpdater extends EventEmitter {
       const releaseUrl = releaseData.html_url || null;
       const releaseNotes = releaseData.body || null;
 
-      // 3. 走加速源时，下载链接也替换成代理地址
+      // 3. 使用加速源时替换下载链接走代理
       if (this.usingProxy && downloadUrl) {
         const ghPath = downloadUrl.replace('https://github.com/', '');
         downloadUrl = `${PROXY_DOWNLOAD}?path=${encodeURIComponent(ghPath)}`;

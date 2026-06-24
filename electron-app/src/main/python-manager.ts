@@ -1,7 +1,6 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getSharedDataDir } from './shared-data-dir';
 
 /**
  * 设置 Playwright 环境变量，确保 Chromium 路径正确。
@@ -129,7 +128,6 @@ export class PythonManager {
         env: {
           ...process.env,
           ...getChromiumEnv(),
-          SPARK_DATA_DIR: getSharedDataDir(),
         },
       });
 

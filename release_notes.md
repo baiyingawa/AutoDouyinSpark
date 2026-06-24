@@ -1,3 +1,12 @@
+## v2.4.1 (2026-06-24)
+
+### 🐛 修复
+- v2.4.0 的 `_get_real_appdata()` 路径重复拼接 bug：SPARK_DATA_DIR 反向导致 AutoDouyinSpark 目录出现两次
+- 移除 python-manager.ts 的 SPARK_DATA_DIR 注入，`_get_real_appdata()` 统一用 Win32 API 获取真实路径
+
+### 🔧 优化
+- 更新策略改为**优先加速源**：先走 uu233.xyz 代理检测和下载，失败才回退 GitHub 直连
+
 ## v2.4.0 (2026-06-23)
 
 ### 🐛 修复
