@@ -120,6 +120,8 @@ if os.path.exists(_CONFIG_FILE):
                 TARGET_USERS = _users
     except Exception:
         pass
+# 去重：防止配置文件中用户重复导致同一人发送多次
+TARGET_USERS = list(dict.fromkeys(TARGET_USERS))
 COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
 STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
 STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
