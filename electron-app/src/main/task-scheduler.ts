@@ -93,16 +93,17 @@ function createSparkSchedulerTask(): void {
 
   const vbsPath = path.join(appPath, 'engine_silent.vbs');
 
-  // 如果 VBS 不存在，自动生成
-  if (!fs.existsSync(vbsPath)) {
+  // Python 脚本路径
+  // 打包后: <exe_dir>\resources\python\engine.py
+  // 开发中: <project_root>\electron-app\python\engine.py
+  const enginePy = app.isPackaged
+    ? path.join(appPath, 'resources', 'python', 'engine.py')
+    : path.join(appPath, 'electron-app', 'python', 'engine.py');
+
+  // 总是重新生成 VBS，确保路径正确（覆盖旧版本错误路径）
+  {
     const escapedPath = appPath.replace(/'/g, "''");
     const dataDir = getSharedDataDir();
-    // 打包后: appPath = exe 所在目录（如 C:\Program Files\AutoDouyinSpark）
-    // 开发中: appPath = 项目根目录（如 E:\PROJECT\AutoDouyinSpark）
-    // 两种情况下 engine.py 都在 <appPath>\electron-app\python\ 下
-    const enginePy = app.isPackaged
-      ? path.join(appPath, 'electron-app', 'python', 'engine.py')
-      : path.join(appPath, 'electron-app', 'python', 'engine.py');
     const vbsContent = `' AutoDouyinSpark 静默运行脚本（通过 engine.py 统一数据目录）
 Dim shell
 Set shell = CreateObject("WScript.Shell")
