@@ -15,8 +15,8 @@ import { EventEmitter } from 'events';
 const REPO_OWNER = 'baiyingawa';
 const REPO_NAME = 'AutoDouyinSpark';
 const GITHUB_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
-const PROXY_API = `https://www.uu233.xyz/api/gh-proxy.php?path=repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
-const PROXY_DOWNLOAD = 'https://www.uu233.xyz/api/dl-proxy.php';
+const PROXY_API = `https://www.douyin.uuovo.xyz/api/gh-proxy.php?path=repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+const PROXY_DOWNLOAD = 'https://www.douyin.uuovo.xyz/api/dl-proxy.php';
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -63,7 +63,7 @@ export class AppUpdater extends EventEmitter {
       let downloadUrl: string | null;
 
       try {
-        // 1. 优先走 uu233.xyz 加速源
+        // 1. 优先走 douyin.uuovo.xyz 加速源
         releaseData = await this.fetchJson(PROXY_API);
       } catch {
         // 2. 加速源失败则回退到 GitHub API 直连
