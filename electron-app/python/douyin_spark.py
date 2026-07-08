@@ -598,9 +598,51 @@ def send_to_user(page, username, msg):
     if not clicked:
         log(f"  ❌ 无法找到「{username}」的会话（搜索不到即不存在）")
         return False
+
+    # 点击后等待对话框加载，检查是否真的进入了私信界面
+    time.sleep(1)
+    chat_ready = False
+    try:
+        page.wait_for_selector('[contenteditable="true"]', timeout=8000)
+        chat_ready = True
+    except:
+        pass
+
+    if not chat_ready:
+        # 可能进了用户主页而非私信对话框，尝试找"发私信"按钮
+        log(f"  ⚠️ 未进入私信对话框，尝试备选入口...")
+        try:
+            dm_btn_selectors = [
+                'text=发私信',
+                '[class*="chat"] [class*="btn"]',
+                'button:has-text("私信")',
+                'span:has-text("私信")',
+            ]
+            for sel in dm_btn_selectors:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=5000)
+                    log(f"  🖱️ 点击备选私信按钮: {sel}")
+                    time.sleep(2)
+                    chat_ready = True
+                    break
+        except:
+            pass
+
+    if not chat_ready:
+        # 截图诊断
+        try:
+            ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+            os.makedirs(ss_dir, exist_ok=True)
+            ss_path = os.path.join(ss_dir, f"debug_{username}_{datetime.now(CHINA_TZ).strftime('%H%M%S')}.png")
+            page.screenshot(path=ss_path)
+            log(f"  📸 诊断截图: {ss_path}")
+        except:
+            pass
+
     try:
         input_el = page.locator('[contenteditable="true"]').first
-        input_el.click(timeout=15000)
+        input_el.click(timeout=10000)
         time.sleep(0.5)
         log(f"  ✏️ 正在输入消息...")
         input_el.type(msg, delay=50)
@@ -611,6 +653,15 @@ def send_to_user(page, username, msg):
         return True
     except Exception as e:
         log(f"❌ 发送给 [{username}] 失败: {e}")
+        # 截一张诊断图
+        try:
+            ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+            os.makedirs(ss_dir, exist_ok=True)
+            ss_path = os.path.join(ss_dir, f"fail_{username}_{datetime.now(CHINA_TZ).strftime('%H%M%S')}.png")
+            page.screenshot(path=ss_path)
+            log(f"  📸 失败截图: {ss_path}")
+        except:
+            pass
         return False
 
 
