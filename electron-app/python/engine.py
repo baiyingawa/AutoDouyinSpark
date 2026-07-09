@@ -150,6 +150,10 @@ def _get_days_cache_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".spark_days_cache")
 
 
+def _get_days_history_path(data_dir: str) -> str:
+    return os.path.join(data_dir, ".spark_days_history")
+
+
 def _get_login_check_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".spark_login_check")
 
@@ -291,6 +295,8 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         spark.STREAK_FILE = _get_streak_path(data_dir)
     if hasattr(spark, 'DAYS_CACHE'):
         spark.DAYS_CACHE = _get_days_cache_path(data_dir)
+    if hasattr(spark, 'DAYS_HISTORY'):
+        spark.DAYS_HISTORY = _get_days_history_path(data_dir)
     if hasattr(spark, 'LOGIN_CHECK_FILE'):
         spark.LOGIN_CHECK_FILE = _get_login_check_path(data_dir)
     if hasattr(spark, 'AVATARS_FILE'):

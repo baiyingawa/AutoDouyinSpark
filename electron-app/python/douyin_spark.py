@@ -127,6 +127,7 @@ STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
 STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
 LOG_FILE = os.path.join(SHARED_DATA_DIR, ".spark_log")
 DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
+DAYS_HISTORY = os.path.join(SHARED_DATA_DIR, ".spark_days_history")  # 按日存档，供趋势图使用
 CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
 AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
@@ -859,6 +860,27 @@ def _scrape_spark_days(page, expand_list=True):
         with open(DAYS_CACHE, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
         log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
+
+        # 追加到历史记录文件（按日归档，供趋势图使用）
+        try:
+            today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
+            history = []
+            if os.path.exists(DAYS_HISTORY):
+                with open(DAYS_HISTORY, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+            # 同一天覆盖，避免重复记录
+            found = False
+            for entry in history:
+                if entry.get("date") == today_str:
+                    entry["days"] = result
+                    found = True
+                    break
+            if not found:
+                history.append({"date": today_str, "days": result})
+            with open(DAYS_HISTORY, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as ex:
+            log(f"⚠️ 写入历史记录失败: {ex}")
 
 
 def _scrape_avatars(page):

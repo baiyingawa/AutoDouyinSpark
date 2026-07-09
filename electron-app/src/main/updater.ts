@@ -15,8 +15,8 @@ import { EventEmitter } from 'events';
 const REPO_OWNER = 'baiyingawa';
 const REPO_NAME = 'AutoDouyinSpark';
 const GITHUB_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
-const PROXY_API = `https://www.douyin.uuovo.xyz/api/gh-proxy.php?path=repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
-const PROXY_DOWNLOAD = 'https://www.douyin.uuovo.xyz/api/dl-proxy.php';
+const PROXY_API = `https://douyin.uuovo.xyz/api/gh-proxy.php?path=repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+const PROXY_DOWNLOAD = 'https://douyin.uuovo.xyz/api/dl-proxy.php';
 
 export interface UpdateInfo {
   hasUpdate: boolean;

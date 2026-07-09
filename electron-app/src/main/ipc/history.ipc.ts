@@ -11,53 +11,18 @@ function getDataDir(): string {
   return getSharedDataDir();
 }
 
-/** 生成近 10 天模拟递增数据（用于演示折线图） */
-function generateMockRecords(realDays: Record<string, number>): any[] {
-  const today = new Date();
-  const result: any[] = [];
-  for (let i = 9; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    const days: Record<string, number> = {};
-    for (const [user, currentVal] of Object.entries(realDays)) {
-      // 从 10 天前开始递增到当前值
-      const base = currentVal - i;
-      days[user] = Math.max(1, base); // 最小为 1
-    }
-    result.push({ date: dateStr, days });
-  }
-  return result;
-}
-
 export function registerHistoryHandlers(): void {
-  // 获取火花天数历史
+  // 获取火花天数历史（从 .spark_days_history 逐日记录读取）
   ipcMain.handle(IPC_CHANNELS.HISTORY_SPARK_DAYS, async () => {
     try {
-      const daysCachePath = path.join(getDataDir(), '.spark_days_cache');
-      const streakPath = path.join(getDataDir(), '.spark_streak');
-
+      const historyPath = path.join(getDataDir(), '.spark_days_history');
       const records: any[] = [];
 
-      // 读取当前天数缓存
-      if (fs.existsSync(daysCachePath)) {
-        const data = JSON.parse(fs.readFileSync(daysCachePath, 'utf-8'));
-        const realDays = data.days || {};
-        const realPrevDays = data.prev_days;
-        const todayDate = data.updated_at?.split('T')[0] || 'unknown';
-
-        // 如果真实数据不足 10 天，生成模拟历史数据用于演示
-        if (Object.keys(realDays).length > 0) {
-          records.push(...generateMockRecords(realDays));
-        } else {
-          records.push({ date: todayDate, days: realDays, prev_days: realPrevDays });
+      if (fs.existsSync(historyPath)) {
+        const raw = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
+        if (Array.isArray(raw)) {
+          records.push(...raw);
         }
-      }
-
-      // 读取连续天数
-      if (fs.existsSync(streakPath)) {
-        const streakData = JSON.parse(fs.readFileSync(streakPath, 'utf-8'));
-        // 连续天数历史已包含在 streaks 文件中
       }
 
       return { success: true, records };
