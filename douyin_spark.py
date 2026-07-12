@@ -9,13 +9,24 @@ import os
 import time
 import sys
 import unicodedata
+import ctypes
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 
 
+def _get_real_appdata():
+    """绕过 Microsoft Store Python 的 APPDATA 虚拟化，始终返回真实 Roaming 路径"""
+    # Win32 API: SHGetFolderPathW(CSIDL_APPDATA=26)
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 26, None, 0, buf)
+        return buf.value
+    except Exception:
+        return os.environ.get('APPDATA', os.path.expanduser('~'))
+
+
 class LoginExpiredException(Exception):
     """Cookie 已过期异常——页面检测到「登录后」/「扫码登录」"""
-    pass
     pass
 
 
@@ -43,17 +54,17 @@ def _get_chromium_executable():
     for base in base_dirs:
         if not base or not os.path.isdir(base):
             continue
-        for d in sorted(os.listdir(base)):
-            if not d.startswith('chromium-'):
+        for entry in sorted(os.listdir(base)):
+            if not entry.startswith('chromium'):
                 continue
             # 完整版 chromium
             for rel in ('chrome-win64/chrome.exe', 'chrome-win/chrome.exe'):
-                cand = os.path.join(base, d, rel)
+                cand = os.path.join(base, entry, rel)
                 if os.path.isfile(cand):
                     return cand
             # headless shell
             for rel in ('chrome-headless-shell-win64/chrome-headless-shell.exe',):
-                cand = os.path.join(base, d, rel)
+                cand = os.path.join(base, entry, rel)
                 if os.path.isfile(cand):
                     return cand
     return None
@@ -72,7 +83,7 @@ except ImportError:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 统一状态文件路径（所有实例共用）
-SHARED_DATA_DIR = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'AutoDouyinSpark', 'data')
+SHARED_DATA_DIR = os.path.join(_get_real_appdata(), 'AutoDouyinSpark', 'data')
 os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 
 # 迁移旧文件（从 SCRIPT_DIR 到 SHARED_DATA_DIR，仅首次）
@@ -109,11 +120,14 @@ if os.path.exists(_CONFIG_FILE):
                 TARGET_USERS = _users
     except Exception:
         pass
+# 去重：防止配置文件中用户重复导致同一人发送多次
+TARGET_USERS = list(dict.fromkeys(TARGET_USERS))
 COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
 STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
 STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
 LOG_FILE = os.path.join(SHARED_DATA_DIR, ".spark_log")
 DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
+DAYS_HISTORY = os.path.join(SHARED_DATA_DIR, ".spark_days_history")  # 按日存档，供趋势图使用
 CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
 AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
@@ -127,6 +141,7 @@ HEADLESS = True
 # Cookie 实测检查间隔（秒）— 默认 1 小时
 _COOKIE_CHECK_INTERVAL = 3600
 
+
 def _acquire_lock(timeout=10):
     """获取进程互斥锁，防止多个浏览器同时运行"""
     import time as _time
@@ -136,20 +151,26 @@ def _acquire_lock(timeout=10):
             try:
                 with open(LOCK_FILE, "r") as f:
                     old_pid = int(f.read().strip())
+                # 检查旧进程是否还在运行
                 os.kill(old_pid, 0)
+                # 旧进程还在，等待
                 _time.sleep(1)
                 waited += 1
                 continue
             except (ValueError, PermissionError, NotADirectoryError):
                 os.remove(LOCK_FILE)
             except OSError:
-                try: os.remove(LOCK_FILE)
-                except: pass
+                # 旧进程不存在，清理锁文件
+                try:
+                    os.remove(LOCK_FILE)
+                except:
+                    pass
         try:
             with open(LOCK_FILE, "w") as f:
                 f.write(str(_PID))
             return True
-        except: pass
+        except:
+            pass
     return False
 
 
@@ -161,9 +182,8 @@ def _release_lock():
                 pid = int(f.read().strip())
             if pid == _PID:
                 os.remove(LOCK_FILE)
-    except: pass
-
-
+    except:
+        pass
 
 
 def _check_login_status_playwright():
@@ -182,6 +202,7 @@ def _check_login_status_playwright():
 
     try:
         with sync_playwright() as p:
+            # 登录检测始终用 headless，不与用户手动登录的浏览器冲突
             launch_kwargs = {"headless": True}
             if CHROMIUM_EXECUTABLE:
                 launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
@@ -460,11 +481,12 @@ def _open_session_list(page):
 
 
 def send_to_user(page, username, msg):
-    """给单个用户发送消息 - 优先使用搜索"""
+    """给单个用户发送消息 - 使用搜索功能定位用户"""
     log(f"  🔍 正在搜索「{username}」...")
 
     # 1. 用搜索功能查找用户
     clicked = False
+
     search_input = None
     # 等待搜索框出现（页面完全渲染需要时间）
     # 多选择器兜底：抖音可能改 placeholder 文字
@@ -512,6 +534,7 @@ def send_to_user(page, username, msg):
                     break
             except:
                 pass
+
     if search_input is not None:
         try:
             search_input.click(timeout=5000)
@@ -520,9 +543,9 @@ def send_to_user(page, username, msg):
             time.sleep(0.3)
             search_input.type(username, delay=50)
             log(f"  ✏️ 已输入搜索关键词: {username}")
-            time.sleep(2)
+            time.sleep(2)  # 等待搜索结果
 
-            # 点击"发私信"按钮
+            # 在搜索结果中点击"发私信"按钮
             try:
                 send_btn = page.locator('text=发私信').first
                 if send_btn.count() > 0:
@@ -533,6 +556,7 @@ def send_to_user(page, username, msg):
             except:
                 pass
 
+            # 如果"发私信"没找到，降级点用户名
             if not clicked:
                 try:
                     result = page.locator(f'text={username}').first
@@ -545,6 +569,7 @@ def send_to_user(page, username, msg):
                     pass
 
             if not clicked:
+                # 尝试 evaluate 遍历
                 items = page.evaluate("""(target) => {
                     const els = document.querySelectorAll('div, span, a, li');
                     const results = [];
@@ -562,46 +587,63 @@ def send_to_user(page, username, msg):
                 if items:
                     item = items[0]
                     page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
+                    log(f"  🖱️ 点击: {username}")
                     clicked = True
                     time.sleep(2)
         except Exception as e:
             log(f"  ⚠️ 搜索失败: {e}")
     else:
         log(f"  ⚠️ 未找到搜索框")
+
+    # 搜索失败则放弃
     if not clicked:
-        # 尝试 evaluate 遍历元素找到用户名
-        log(f"  🔄 搜索方式未生效，降级到页面扫描...")
-        try:
-            items = page.evaluate("""(target) => {
-                const els = document.querySelectorAll('div, span, a, li');
-                const results = [];
-                const seen = new Set();
-                els.forEach(el => {
-                    const t = el.textContent.trim();
-                    if (t === target && !seen.has(t) && el.offsetHeight > 0) {
-                        seen.add(t);
-                        const r = el.getBoundingClientRect();
-                        results.push({x: r.x, y: r.y, w: r.width, h: r.height});
-                    }
-                });
-                return results;
-            }""", username)
-            if items:
-                item = items[0]
-                page.mouse.click(item['x'] + item['w'] / 2, item['y'] + item['h'] / 2)
-                log(f"  🖱️ 点击: {username}")
-                clicked = True
-                time.sleep(2)
-        except Exception as e:
-            log(f"  ⚠️ 页面扫描失败: {e}")
-    if not clicked:
-        log(f"  ❌ 无法找到「{username}」的会话")
+        log(f"  ❌ 无法找到「{username}」的会话（搜索不到即不存在）")
         return False
 
-    time.sleep(1.5)  # 等待聊天界面加载
+    # 点击后等待对话框加载，检查是否真的进入了私信界面
+    time.sleep(1)
+    chat_ready = False
+    try:
+        page.wait_for_selector('[contenteditable="true"]', timeout=8000)
+        chat_ready = True
+    except:
+        pass
+
+    if not chat_ready:
+        # 可能进了用户主页而非私信对话框，尝试找"发私信"按钮
+        log(f"  ⚠️ 未进入私信对话框，尝试备选入口...")
+        try:
+            dm_btn_selectors = [
+                'text=发私信',
+                '[class*="chat"] [class*="btn"]',
+                'button:has-text("私信")',
+                'span:has-text("私信")',
+            ]
+            for sel in dm_btn_selectors:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=5000)
+                    log(f"  🖱️ 点击备选私信按钮: {sel}")
+                    time.sleep(2)
+                    chat_ready = True
+                    break
+        except:
+            pass
+
+    if not chat_ready:
+        # 截图诊断
+        try:
+            ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+            os.makedirs(ss_dir, exist_ok=True)
+            ss_path = os.path.join(ss_dir, f"debug_{username}_{datetime.now(CHINA_TZ).strftime('%H%M%S')}.png")
+            page.screenshot(path=ss_path)
+            log(f"  📸 诊断截图: {ss_path}")
+        except:
+            pass
+
     try:
         input_el = page.locator('[contenteditable="true"]').first
-        input_el.click(timeout=15000)
+        input_el.click(timeout=10000)
         time.sleep(0.5)
         log(f"  ✏️ 正在输入消息...")
         input_el.type(msg, delay=50)
@@ -612,77 +654,16 @@ def send_to_user(page, username, msg):
         return True
     except Exception as e:
         log(f"❌ 发送给 [{username}] 失败: {e}")
-        return False
-
-
-def _scrape_avatars(page):
-    """从当前页面（聊天/私信列表）抓取用户头像 URL"""
-    try:
-        targets = list(TARGET_USERS)
-        if not targets:
-            return
-        # 等待会话列表渲染
+        # 截一张诊断图
         try:
-            page.wait_for_selector('img[src*="douyinpic"], img[src*="byteimg"]', timeout=30000)
+            ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+            os.makedirs(ss_dir, exist_ok=True)
+            ss_path = os.path.join(ss_dir, f"fail_{username}_{datetime.now(CHINA_TZ).strftime('%H%M%S')}.png")
+            page.screenshot(path=ss_path)
+            log(f"  📸 失败截图: {ss_path}")
         except:
             pass
-        time.sleep(2)
-
-        data = page.evaluate("""(targetNames) => {
-            // 1. 收集所有包含用户名的文本位置（扩大元素类型）
-            const nameItems = [];
-            const allEls = document.querySelectorAll('div, span, li, a, p, section, h1, h2, h3, h4, h5, h6, button');
-            allEls.forEach(el => {
-                const text = (el.textContent || '').trim();
-                if (text.length === 0 || text.length > 200) return;
-                for (const name of targetNames) {
-                    if (text.includes(name) && text.length < name.length + 80) {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0 && r.width < 400) {
-                            nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
-                        }
-                    }
-                }
-            });
-            // 2. 收集头像图片（>=32px，放宽尺寸限制）
-            const avatarImgs = [];
-            document.querySelectorAll('img').forEach(img => {
-                const src = img.src || '';
-                if (!src || src.includes('svg')) return;
-                const r = img.getBoundingClientRect();
-                if (r.width < 32 || r.height < 32 || r.width > 200 || r.height > 200) return;
-                avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
-            });
-            // 3. 垂直距离匹配
-            const results = {};
-            for (const name of targetNames) {
-                const userItems = nameItems.filter(i => i.name === name);
-                if (userItems.length === 0) continue;
-                let best = null, bestScore = Infinity;
-                for (const pos of userItems) {
-                    for (const img of avatarImgs) {
-                        const vDist = Math.abs(img.y + img.h/2 - (pos.y + pos.h/2));
-                        if (vDist < 100 && vDist < bestScore) {
-                            bestScore = vDist;
-                            best = img.src;
-                        }
-                    }
-                }
-                if (best) results[name] = best;
-            }
-            results['__debug'] = 'names=' + nameItems.length + ' imgs=' + avatarImgs.length;
-            return results;
-        }""", targets)
-        debug_info = data.pop('__debug', '')
-        log(f"  📊 头像扫描: {debug_info}")
-        if data and len(data) > 0:
-            with open(AVATARS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            log(f"📸 已缓存 {len(data)} 个头像: {list(data.keys())}")
-        else:
-            log(f"⚠️ 未抓到头像（目标: {targets}）")
-    except Exception as e:
-        log(f"⚠️ 抓取头像失败: {e}")
+        return False
 
 
 def send_messages():
@@ -880,6 +861,97 @@ def _scrape_spark_days(page, expand_list=True):
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
         log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
 
+        # 追加到历史记录文件（按日归档，供趋势图使用）
+        try:
+            today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
+            history = []
+            if os.path.exists(DAYS_HISTORY):
+                with open(DAYS_HISTORY, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+            # 同一天覆盖，避免重复记录
+            found = False
+            for entry in history:
+                if entry.get("date") == today_str:
+                    entry["days"] = result
+                    found = True
+                    break
+            if not found:
+                history.append({"date": today_str, "days": result})
+            with open(DAYS_HISTORY, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as ex:
+            log(f"⚠️ 写入历史记录失败: {ex}")
+
+
+def _scrape_avatars(page):
+    """从聊天页面抓取用户头像 URL，按坐标匹配用户名"""
+    try:
+        targets = list(TARGET_USERS)
+        if not targets:
+            return
+        # 等待页面加载出会话列表（确保有头像可抓）
+        try:
+            page.wait_for_selector('img[src*="douyinpic"]', timeout=30000)
+        except:
+            pass
+        time.sleep(2)
+
+        data = page.evaluate("""(targetNames) => {
+            // 1. 收集所有包含用户名的文本位置（扩大元素类型）
+            const nameItems = [];
+            const allEls = document.querySelectorAll('div, span, li, a, p, section, h1, h2, h3, h4, h5, h6, button');
+            allEls.forEach(el => {
+                const text = (el.textContent || '').trim();
+                if (text.length === 0 || text.length > 200) return;
+                for (const name of targetNames) {
+                    if (text.includes(name) && text.length < name.length + 80) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0 && r.width < 400) {
+                            nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
+                        }
+                    }
+                }
+            });
+            // 2. 收集头像图片（>=32px，放宽尺寸限制）
+            const avatarImgs = [];
+            document.querySelectorAll('img').forEach(img => {
+                const src = img.src || '';
+                if (!src || src.includes('svg')) return;
+                const r = img.getBoundingClientRect();
+                if (r.width < 32 || r.height < 32 || r.width > 200 || r.height > 200) return;
+                avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
+            });
+            // 3. 垂直距离匹配
+            const results = {};
+            for (const name of targetNames) {
+                const userItems = nameItems.filter(i => i.name === name);
+                if (userItems.length === 0) continue;
+                let best = null, bestScore = Infinity;
+                for (const pos of userItems) {
+                    for (const img of avatarImgs) {
+                        const vDist = Math.abs(img.y + img.h/2 - (pos.y + pos.h/2));
+                        if (vDist < 100 && vDist < bestScore) {
+                            bestScore = vDist;
+                            best = img.src;
+                        }
+                    }
+                }
+                if (best) results[name] = best;
+            }
+            results['__debug'] = 'names=' + nameItems.length + ' imgs=' + avatarImgs.length;
+            return results;
+        }""", targets)
+        debug_info = data.pop('__debug', '')
+        log(f"  📊 头像扫描: {debug_info}")
+        if data and len(data) > 0:
+            with open(AVATARS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            log(f"📸 已缓存 {len(data)} 个头像: {list(data.keys())}")
+        else:
+            log(f"⚠️ 未抓到头像（目标: {targets}）")
+    except Exception as e:
+        log(f"⚠️ 抓取头像失败: {e}")
+
 
 def _check_cookie_expiry():
     """检查 Cookie 过期情况，必要时发邮件提醒（无配置则静默跳过）"""
@@ -967,10 +1039,13 @@ def _confirm_spark_check(today, new_days):
         log(f"⏳ 对方尚未续火花（基准: {dict(prev_days)}，最新: {dict(new_days)}），继续检查")
 
 
-def _update_spark_days(force=False):
+def _update_spark_days():
     """单独打开浏览器抓取火花天数，并判断对方是否续了"""
+    if not os.path.exists(COOKIE_FILE):
+        log("⚠️ 未检测到 Cookie 文件，跳过火花天数更新")
+        return
     today = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-    if not force and _should_skip_spark_check(today):
+    if _should_skip_spark_check(today):
         log(f"⏭️ 今日对方续火花已确认，跳过检查")
         return
 
@@ -1007,12 +1082,7 @@ def _update_spark_days(force=False):
             time.sleep(3)
             _dismiss_trust_dialog(page)
             try:
-                # 先抓头像（默认会话列表已可见，不展开以免切换状态）
-                _scrape_avatars(page)
-                # 再展开列表抓天数
-                _open_session_list(page)
-                time.sleep(1)
-                _scrape_spark_days(page, expand_list=False)
+                _scrape_spark_days(page)
             except Exception as e:
                 log(f"⚠️ 无法进入私信抓取火花天数: {e}")
 
@@ -1117,6 +1187,7 @@ def _run_spark_session(force=False):
             pass
 
         # 等待页面稳定（多选择器兜底，5 秒超时）
+        # 注意：[contenteditable] 是聊天输入框不是搜索框，不能放这里
         try:
             sel = page.locator('input[placeholder*="搜索"],input[class*="search"],input[aria-label*="搜索"]').first
             sel.wait_for(state="visible", timeout=5000)
@@ -1252,6 +1323,6 @@ def main(force=False):
 if __name__ == "__main__":
     force = "--force" in sys.argv
     if "--refresh-days" in sys.argv:
-        _update_spark_days(force=force)
+        _update_spark_days()
     else:
         main(force=force)

@@ -67,8 +67,9 @@ def _import_douyin_spark():
     for k in list(sys.modules.keys()):
         if 'douyin_spark' in k:
             del sys.modules[k]
-    # 确保 ENGINE_DIR 和其父目录都在 sys.path 中
-    for p in [ENGINE_DIR, os.path.abspath(os.path.join(ENGINE_DIR, ".."))]:
+    # 始终优先从 ENGINE_DIR 导入（与 engine.py 同目录）
+    # 插入到 sys.path 最前面，防止同名旧版文件干扰
+    for p in [ENGINE_DIR]:
         if p not in sys.path:
             sys.path.insert(0, p)
     # 尝试导入
