@@ -480,6 +480,32 @@ def _open_session_list(page):
     return False
 
 
+def _active_chat_matches(page, username):
+    """确认右侧当前打开的聊天窗口确实属于目标用户。"""
+    try:
+        return bool(page.evaluate("""(target) => {
+            const minChatX = window.innerWidth * 0.2;
+            const elements = document.querySelectorAll('h1,h2,h3,header,[class*="header"],[class*="title"],div,span');
+            return Array.from(elements).some((el) => {
+                if ((el.textContent || '').trim() !== target) return false;
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && rect.x >= minChatX && rect.y < 150;
+            });
+        }""", username))
+    except Exception:
+        return False
+
+
+def _wait_for_active_chat(page, username, timeout=8):
+    """等待聊天标题切换到目标用户，避免沿用上一个会话。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _active_chat_matches(page, username):
+            return True
+        time.sleep(0.4)
+    return False
+
+
 def send_to_user(page, username, msg):
     """给单个用户发送消息 - 使用搜索功能定位用户"""
     log(f"  🔍 正在搜索「{username}」...")
@@ -545,16 +571,23 @@ def send_to_user(page, username, msg):
             log(f"  ✏️ 已输入搜索关键词: {username}")
             time.sleep(2)  # 等待搜索结果
 
-            # 在搜索结果中点击"发私信"按钮
-            try:
-                send_btn = page.locator('text=发私信').first
-                if send_btn.count() > 0:
-                    send_btn.click(timeout=5000)
-                    log(f"  🖱️ 点击「发私信」")
-                    clicked = True
-                    time.sleep(2)
-            except:
-                pass
+            # 抖音搜索结果当前使用“发消息”，旧版本使用“发私信”。
+            for send_selector, label in [
+                ('text=发消息', '发消息'),
+                ('text=发私信', '发私信'),
+                ('button:has-text("发消息")', '发消息'),
+                ('button:has-text("发私信")', '发私信'),
+            ]:
+                try:
+                    send_btn = page.locator(send_selector).first
+                    if send_btn.count() > 0 and send_btn.is_visible():
+                        send_btn.click(timeout=5000)
+                        log(f"  🖱️ 点击「{label}」")
+                        clicked = True
+                        time.sleep(2)
+                        break
+                except:
+                    continue
 
             # 如果"发私信"没找到，降级点用户名
             if not clicked:
@@ -614,9 +647,12 @@ def send_to_user(page, username, msg):
         log(f"  ⚠️ 未进入私信对话框，尝试备选入口...")
         try:
             dm_btn_selectors = [
+                'text=发消息',
                 'text=发私信',
                 '[class*="chat"] [class*="btn"]',
+                'button:has-text("发消息")',
                 'button:has-text("私信")',
+                'span:has-text("发消息")',
                 'span:has-text("私信")',
             ]
             for sel in dm_btn_selectors:
@@ -640,6 +676,20 @@ def send_to_user(page, username, msg):
             log(f"  📸 诊断截图: {ss_path}")
         except:
             pass
+
+    # 搜索结果点击成功不代表右侧会话已经切换；必须校验标题，
+    # 否则第二个用户可能会被误发到第一个用户的聊天窗口。
+    if not _wait_for_active_chat(page, username):
+        log(f"  ❌ 当前聊天窗口不是「{username}」，取消发送以避免误发")
+        try:
+            ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+            os.makedirs(ss_dir, exist_ok=True)
+            ss_path = os.path.join(ss_dir, f"fail_{username}_{datetime.now(CHINA_TZ).strftime('%H%M%S')}.png")
+            page.screenshot(path=ss_path)
+            log(f"  📷 会话校验失败截图: {ss_path}")
+        except:
+            pass
+        return False
 
     try:
         input_el = page.locator('[contenteditable="true"]').first

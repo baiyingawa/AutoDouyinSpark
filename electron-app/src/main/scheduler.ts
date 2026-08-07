@@ -36,6 +36,7 @@ export class SparkScheduler {
   private lastCheckTime: string | null = null;
   private onStatusChange: ((status: SchedulerStatus) => void) | null = null;
   private notifyingWindows: Set<BrowserWindow> = new Set();
+  private checkInProgress = false;
 
   constructor(options: SchedulerOptions = {}) {
     this.pm = new PythonManager();
@@ -119,7 +120,10 @@ export class SparkScheduler {
     const beijingHour = (utcHour + 8) % 24;
 
     for (const win of windows) {
-      if (beijingHour >= win.start && beijingHour <= win.end) {
+      const inWindow = win.start <= win.end
+        ? beijingHour >= win.start && beijingHour <= win.end
+        : beijingHour >= win.start || beijingHour <= win.end;
+      if (inWindow) {
         return `${win.start}:00-${win.end}:00`;
       }
     }
@@ -193,6 +197,8 @@ export class SparkScheduler {
    * 执行一次检查
    */
   async checkAndExecute(): Promise<void> {
+    if (this.checkInProgress) return;
+    this.checkInProgress = true;
     this.lastCheckTime = new Date().toISOString();
     let currentWindow: string | null = null;  // 外层作用域
 
@@ -207,6 +213,7 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'no_cookie',
         });
+        this.checkInProgress = false;
         return;
       }
 
@@ -220,6 +227,7 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'no_login_check',
         });
+        this.checkInProgress = false;
         return;
       }
 
@@ -232,6 +240,7 @@ export class SparkScheduler {
           nextAction: 'login_invalid',
         });
         this._bringToFrontAndShowLogin();
+        this.checkInProgress = false;
         return;
       }
 
@@ -247,6 +256,7 @@ export class SparkScheduler {
             nextAction: 'login_check_stale',
           });
           this._bringToFrontAndShowLogin();
+          this.checkInProgress = false;
           return;
         }
       }
@@ -263,6 +273,7 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: this.getNextWindowDescription(),
         });
+        this.checkInProgress = false;
         return;
       }
 
@@ -275,6 +286,7 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'today_sent',
         });
+        this.checkInProgress = false;
         return;
       }
 
@@ -305,13 +317,17 @@ export class SparkScheduler {
       console.error(`[Scheduler] 检查异常:`, err);
     }
 
-    if (this.onStatusChange) {
-      this.onStatusChange({
-        running: this.isRunning(),
-        currentWindow,
-        lastCheck: this.lastCheckTime,
-        nextAction: this.getNextWindowDescription(),
-      });
+    try {
+      if (this.onStatusChange) {
+        this.onStatusChange({
+          running: this.isRunning(),
+          currentWindow,
+          lastCheck: this.lastCheckTime,
+          nextAction: this.getNextWindowDescription(),
+        });
+      }
+    } finally {
+      this.checkInProgress = false;
     }
   }
 

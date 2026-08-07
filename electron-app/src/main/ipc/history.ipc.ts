@@ -62,14 +62,18 @@ export function registerHistoryHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.HISTORY_SCREENSHOT_DATA, async (_event, filename: string) => {
     try {
       const ssDir = path.join(getDataDir(), 'screenshots');
-      const fpath = path.resolve(ssDir, filename);
+      if (typeof filename !== 'string' || filename.length === 0) {
+        return { success: false, error: '文件名无效' };
+      }
+      const resolvedDir = path.resolve(ssDir);
+      const fpath = path.resolve(resolvedDir, filename);
 
       // 防止路径穿越
-      if (!fpath.startsWith(path.resolve(ssDir))) {
+      if (path.dirname(fpath) !== resolvedDir || path.basename(fpath) !== filename || path.extname(fpath).toLowerCase() !== '.png') {
         return { success: false, error: '路径不合法' };
       }
 
-      if (!fs.existsSync(fpath)) {
+      if (!fs.existsSync(fpath) || !fs.statSync(fpath).isFile()) {
         return { success: false, error: `文件不存在: ${filename}` };
       }
 

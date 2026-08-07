@@ -130,6 +130,7 @@ export class PythonManager {
           ...getChromiumEnv(),
         },
       });
+      this.process = child;
 
       if (options.stdin && child.stdin) {
         child.stdin.write(options.stdin);
@@ -139,6 +140,15 @@ export class PythonManager {
       const timeout = options.timeout ?? 30000;
       let stdout = '';
       let stderr = '';
+      let settled = false;
+
+      const finish = (result: PythonExecResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.process === child) this.process = null;
+        resolve(result);
+      };
 
       child.stdout?.setEncoding('utf8');
       child.stdout?.on('data', (data: string) => {
@@ -151,7 +161,7 @@ export class PythonManager {
 
       const timer = setTimeout(() => {
         child.kill();
-        resolve({
+        finish({
           success: false,
           stdout,
           stderr: stderr + '\nError: Process timed out',
@@ -160,8 +170,7 @@ export class PythonManager {
       }, timeout);
 
       child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve({
+        finish({
           success: code === 0,
           stdout,
           stderr,
@@ -170,8 +179,7 @@ export class PythonManager {
       });
 
       child.on('error', (err) => {
-        clearTimeout(timer);
-        resolve({
+        finish({
           success: false,
           stdout,
           stderr: err.message,

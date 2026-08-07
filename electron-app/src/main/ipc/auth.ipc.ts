@@ -58,6 +58,7 @@ export function registerAuthHandlers(): void {
       return {
         success: true,
         status: result.status || 'pending',
+        cookieCount: result.cookieCount || 0,
       };
     } catch (err) {
       return { success: false, status: 'failed', error: String(err) };
