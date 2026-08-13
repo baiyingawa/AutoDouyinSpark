@@ -336,6 +336,12 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         except Exception:
             spark.HEADLESS = False
 
+    # 重绑定共享数据目录并重载好友列表（多级匹配）
+    if hasattr(spark, 'SHARED_DATA_DIR'):
+        spark.SHARED_DATA_DIR = data_dir
+    if hasattr(spark, '_rebind_paths'):
+        spark._rebind_paths()
+
     screenshots_before = set()
     ss_dir = os.path.join(data_dir, "screenshots")
     if os.path.isdir(ss_dir):
@@ -363,17 +369,17 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
     sent_users = []
     failed_users = []
 
-    # Monkey-patch send_to_user to track results
-    _original_send = getattr(spark, 'send_to_user', None)
+    # Monkey-patch send_to_friend to track results
+    _original_send = getattr(spark, 'send_to_friend', None)
     if _original_send:
-        def _tracked_send(page, username, msg):
-            result = _original_send(page, username, msg)
-            if result:
-                sent_users.append(username)
+        def _tracked_send(page, friend, msg):
+            result = _original_send(page, friend, msg)
+            if result and result.get('ok'):
+                sent_users.append(result.get('name') or friend.get('name'))
             else:
-                failed_users.append(username)
+                failed_users.append(friend.get('name'))
             return result
-        spark.send_to_user = _tracked_send
+        spark.send_to_friend = _tracked_send
 
     try:
         spark.main(force=force)
@@ -716,6 +722,49 @@ def action_email_test(data_dir: str, stdin_data: str = "", json_mode: bool = Tru
     return result
 
 
+# ─── 识别好友抖音号与头像 ───────────────────────────────
+
+
+def action_identify_user(data_dir: str, username: str, json_mode: bool = True) -> dict:
+    """识别好友抖音号与头像（独立浏览器会话），成功后写回 spark_config.json。"""
+    _ensure_data_dir(data_dir)
+    spark = _import_douyin_spark()
+    if spark is None:
+        result = {"success": False, "error": "无法导入 douyin_spark 模块"}
+        _json_out(result, json_mode)
+        return result
+    if hasattr(spark, "SHARED_DATA_DIR"):
+        spark.SHARED_DATA_DIR = data_dir
+    if hasattr(spark, "_rebind_paths"):
+        spark._rebind_paths()
+    if hasattr(spark, "HEADLESS"):
+        try:
+            cfg_path = _get_config_path(data_dir)
+            _hide = True
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as _f:
+                    _hide = json.load(_f).get("hideBrowser", True)
+            spark.HEADLESS = bool(_hide)
+        except Exception:
+            spark.HEADLESS = True
+    try:
+        result = spark.identify_friend(username)
+    except Exception as e:
+        result = {"success": False, "error": str(e)}
+    if result.get("success") and result.get("name"):
+        try:
+            spark.update_friend_in_config(
+                old_name=username,
+                new_name=(result["name"] if result["name"] != username else None),
+                douyin_id=(result.get("douyin_id") or None),
+                avatar_file=(result.get("avatar_file") or None),
+            )
+        except Exception as e:
+            result["config_error"] = str(e)
+    _json_out(result, json_mode)
+    return result
+
+
 # ─── CLI 入口 ───────────────────────────────────────────
 
 
@@ -733,6 +782,7 @@ _ACTIONS = {
     "screenshot-get": action_screenshot_get,
     "email-check": action_email_check,
     "email-test": action_email_test,
+    "identify-user": action_identify_user,
 }
 
 
@@ -743,6 +793,7 @@ def main():
     parser.add_argument("--json", action="store_true", help="JSON 输出模式")
     parser.add_argument("--force", action="store_true", help="强制模式（用于 send 动作）")
     parser.add_argument("--file", help="文件名参数（用于 screenshot-get 动作）")
+    parser.add_argument("--user", help="用户参数（用于 identify-user 动作）")
     args = parser.parse_args()
 
     data_dir = os.path.abspath(args.data_dir)
@@ -764,6 +815,11 @@ def main():
             action_fn(data_dir, force=args.force, json_mode=json_mode)
         elif args.action == "check-playwright":
             action_fn(json_mode=json_mode)
+        elif args.action == "identify-user":
+            if not args.user:
+                print(json.dumps({"success": False, "error": "--user 参数缺失"}), ensure_ascii=False)
+                sys.exit(1)
+            action_fn(data_dir, username=args.user, json_mode=json_mode)
         else:
             action_fn(data_dir, json_mode=json_mode)
     except Exception as e:

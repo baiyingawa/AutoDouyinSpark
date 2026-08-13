@@ -22,6 +22,8 @@ export const IPC_CHANNELS = {
   FRIENDS_LIST: 'friends:list',
   FRIENDS_ADD: 'friends:add',
   FRIENDS_REMOVE: 'friends:remove',
+  FRIENDS_UPDATE: 'friends:update',
+  FRIENDS_IDENTIFY: 'friends:identify',
 
   // 续火花
   SPARK_SEND: 'spark:send',

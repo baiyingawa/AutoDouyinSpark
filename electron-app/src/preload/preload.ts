@@ -43,6 +43,10 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_ADD, username),
   friendsRemove: (username: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_REMOVE, username),
+  friendsUpdate: (payload: { name: string; newName?: string; douyin_id?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_UPDATE, payload),
+  friendsIdentify: (username: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_IDENTIFY, username),
 
   // 续火花
   sparkSend: (force?: boolean) =>

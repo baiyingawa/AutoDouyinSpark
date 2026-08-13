@@ -24,6 +24,8 @@ dist/
 
 # Electron 打包输出
 release/
+build_log.txt
+rebuild_log.txt
 # 构建输出
 dist/
 .vscode/

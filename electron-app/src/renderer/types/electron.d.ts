@@ -41,9 +41,23 @@ export interface LoginCheckResult {
   error?: string;
 }
 
+export interface Friend {
+  name: string;
+  douyin_id?: string;
+  avatar_file?: string;
+}
+
 export interface FriendsListResult {
   success: boolean;
-  users: string[];
+  users: Friend[];
+}
+
+export interface FriendsIdentifyResult {
+  success: boolean;
+  name?: string;
+  douyin_id?: string;
+  avatar_file?: string;
+  error?: string;
 }
 
 export interface HistorySparkDaysResult {
@@ -124,6 +138,8 @@ export interface ElectronAPI {
   friendsList: () => Promise<FriendsListResult>;
   friendsAdd: (username: string) => Promise<{ success: boolean; error?: string }>;
   friendsRemove: (username: string) => Promise<{ success: boolean; error?: string }>;
+  friendsUpdate: (payload: { name: string; newName?: string; douyin_id?: string }) => Promise<{ success: boolean; error?: string }>;
+  friendsIdentify: (username: string) => Promise<FriendsIdentifyResult>;
 
   // 续火花
   sparkSend: (force?: boolean) => Promise<SparkSendResult>;

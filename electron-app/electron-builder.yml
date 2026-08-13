@@ -12,6 +12,11 @@ extraResources:
     to: python
     filter:
       - "**/*"
+      - "!cookie_export.json"
+      - "!email_config.json"
+      - "!.spark_*"
+      - "!__pycache__/**"
+      - "!*.pyc"
   - from: resources
     to: resources
     filter:

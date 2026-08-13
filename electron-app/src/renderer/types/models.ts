@@ -20,6 +20,12 @@ export interface SparkStatus {
 }
 
 /** 好友信息 */
+export interface Friend {
+  name: string;
+  douyin_id?: string;
+  avatar_file?: string;
+}
+
 export interface FriendInfo {
   username: string;
   sparkDays: number;
@@ -102,7 +108,16 @@ export interface SparkSendResult {
 /** 好友列表结果 */
 export interface FriendsListResult {
   success: boolean;
-  users: string[];
+  users: Friend[];
+}
+
+/** 抖音号/头像识别结果 */
+export interface FriendsIdentifyResult {
+  success: boolean;
+  name?: string;
+  douyin_id?: string;
+  avatar_file?: string;
+  error?: string;
 }
 
 /** 调度器状态 */

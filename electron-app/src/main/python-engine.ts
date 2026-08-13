@@ -126,6 +126,16 @@ export class PythonEngine {
     return this.callEngine('check-playwright');
   }
 
+  // --- 好友识别（抖音号 + 头像） ---
+  async identifyFriend(username: string): Promise<any> {
+    // 识别需要启动独立浏览器会话，放宽超时
+    const originalTimeout = this.config.timeout;
+    this.config.timeout = 240000;
+    const result = await this.callEngine('identify-user', ['--user', username]);
+    this.config.timeout = originalTimeout;
+    return result;
+  }
+
   // --- 截图 ---
   async screenshotsList(): Promise<any> {
     return this.callEngine('screenshots-list');
