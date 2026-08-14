@@ -1,3 +1,5 @@
+
+
 # AutoDouyinSpark v2.7.0
 
 抖音自动续火花助手 — Electron 桌面端。  
@@ -109,10 +111,12 @@ AutoDouyinSpark/
 {
   "target_users": ["好友A", "好友B"],
   "message_template": "[Auto]火花火花！{time}",
-  "morningStart": 1,
-  "morningEnd": 7,
-  "eveningStart": 17,
-  "eveningEnd": 19,
+  "timeWindowsEnabled": true,
+  "timeWindows": [
+    { "start": 1, "end": 7 },
+    { "start": 17, "end": 19 }
+  ],
+  "autoStart": false,
   "hideBrowser": true
 }
 ```
