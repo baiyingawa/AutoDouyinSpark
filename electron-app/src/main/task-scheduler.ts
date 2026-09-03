@@ -18,6 +18,40 @@ import { getSharedDataDir } from './shared-data-dir';
 
 const TASK_NAME = '\\AutoDouyinSparkEngine';
 
+export interface WindowsTaskStatus {
+  exists: boolean;
+  state: string | null;
+  enabled: boolean;
+  nextRunTime: string | null;
+  lastRunTime: string | null;
+  lastResult: string | null;
+}
+
+export function getSparkSchedulerTaskStatus(): Promise<WindowsTaskStatus> {
+  return new Promise((resolve) => {
+    exec(`schtasks /Query /TN "${TASK_NAME}" /V /FO LIST`, (err, stdout) => {
+      if (err) {
+        resolve({ exists: false, state: null, enabled: false, nextRunTime: null, lastRunTime: null, lastResult: null });
+        return;
+      }
+      const value = (label: string): string | null => {
+        const line = stdout.split(/\r?\n/).find((item) => item.trimStart().startsWith(`${label}:`));
+        return line ? line.substring(line.indexOf(':') + 1).trim() || null : null;
+      };
+      const state = value('Status');
+      const taskState = value('Scheduled Task State');
+      resolve({
+        exists: true,
+        state,
+        enabled: taskState !== 'Disabled' && state !== 'Disabled',
+        nextRunTime: value('Next Run Time'),
+        lastRunTime: value('Last Run Time'),
+        lastResult: value('Last Result'),
+      });
+    });
+  });
+}
+
 /**
  * 确认 Windows 计划任务存在且配置正确。
  * - 不存在 → 创建（双触发器：登录时 + 每小时重复）

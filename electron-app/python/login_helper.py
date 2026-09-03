@@ -53,6 +53,7 @@ except ImportError:
     pass  # 调用时再检测
 
 _BROWSER_PID_FILE = "login_browser.pid"
+_LOGIN_LOCK_FILE = "login.lock"
 _COOKIE_CHECK_INTERVAL = 2  # 秒
 _LOGIN_TIMEOUT = 300  # 5 分钟
 _MIN_COOKIE_COUNT = 10
@@ -152,6 +153,68 @@ def _has_login_markers(cookies_list: list) -> bool:
     return False
 
 
+def _acquire_login_lock(data_dir: str) -> bool:
+    """保证同一数据目录只有一个网页登录流程。"""
+    lock_path = os.path.join(data_dir, _LOGIN_LOCK_FILE)
+    payload = json.dumps({"pid": os.getpid(), "timestamp": time.time()})
+    for _ in range(2):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+            return True
+        except FileExistsError:
+            try:
+                with open(lock_path, "r", encoding="utf-8") as handle:
+                    owner_pid = int(json.load(handle).get("pid", 0))
+                if owner_pid > 0:
+                    os.kill(owner_pid, 0)
+                    return False
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            try:
+                os.remove(lock_path)
+            except OSError:
+                return False
+    return False
+
+
+def _release_login_lock(data_dir: str) -> None:
+    lock_path = os.path.join(data_dir, _LOGIN_LOCK_FILE)
+    try:
+        with open(lock_path, "r", encoding="utf-8") as handle:
+            owner_pid = int(json.load(handle).get("pid", 0))
+        if owner_pid != os.getpid():
+            return
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    try:
+        os.remove(lock_path)
+    except OSError:
+        pass
+
+
+def _write_login_cache(data_dir: str) -> None:
+    cache_path = os.path.join(data_dir, ".spark_login_check")
+    try:
+        with open(cache_path, "w", encoding="utf-8") as handle:
+            json.dump({"valid": True, "checked_at": datetime.now().astimezone().isoformat()}, handle)
+    except OSError:
+        pass
+
+
+def _has_saved_login(data_dir: str) -> tuple[bool, int]:
+    """读取已保存的 Cookie，避免轮询时被临时文件状态误判。"""
+    cookie_path = os.path.join(data_dir, "cookie_export.json")
+    try:
+        with open(cookie_path, "r", encoding="utf-8") as handle:
+            cookies = json.load(handle)
+        valid = isinstance(cookies, list) and _has_login_markers(cookies)
+        return valid, len(cookies) if isinstance(cookies, list) else 0
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False, 0
+
+
 def start_login(data_dir: str) -> dict:
     """
     启动网页登录。
@@ -168,6 +231,10 @@ def start_login(data_dir: str) -> dict:
         return {"success": False, "error": "Playwright 未安装，请先运行 pip install playwright && playwright install chromium"}
 
     os.makedirs(data_dir, exist_ok=True)
+    if not _acquire_login_lock(data_dir):
+        _log("已有网页登录流程正在运行，忽略重复启动")
+        return {"success": False, "error": "已有登录流程正在进行中"}
+
     pid_file = os.path.join(data_dir, _BROWSER_PID_FILE)
     cookie_path = os.path.join(data_dir, "cookie_export.json")
     abort_login(data_dir)
@@ -306,6 +373,12 @@ def start_login(data_dir: str) -> dict:
                 os.remove(pid_file)
         except Exception:
             pass
+        if _playwright is not None:
+            try:
+                _playwright.__exit__(None, None, None)
+            except Exception:
+                pass
+        _release_login_lock(data_dir)
 
 
 def poll_login(data_dir: str) -> dict:
@@ -318,15 +391,11 @@ def poll_login(data_dir: str) -> dict:
     pid_file = os.path.join(data_dir, _BROWSER_PID_FILE)
     cookie_path = os.path.join(data_dir, "cookie_export.json")
 
-    # 检查 Cookie 文件
-    if os.path.exists(cookie_path):
-        try:
-            with open(cookie_path, "r", encoding="utf-8") as f:
-                cookies = json.load(f)
-            if isinstance(cookies, list) and _has_login_markers(cookies):
-                return {"status": "success", "cookieCount": len(cookies)}
-        except Exception:
-            pass
+    # 检查已保存 Cookie。成功后即使登录浏览器仍在收尾，也保持成功状态。
+    saved, cookie_count = _has_saved_login(data_dir)
+    if saved:
+        _write_login_cache(data_dir)
+        return {"status": "success", "cookieCount": cookie_count}
 
     # 检查 PID 文件（浏览器是否还在运行）
     if os.path.exists(pid_file):

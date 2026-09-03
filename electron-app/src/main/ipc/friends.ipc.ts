@@ -188,10 +188,25 @@ export function registerFriendsHandlers(): void {
         };
       }
       const friends = listFriends();
-      const friend = findFriend(friends, result.name || name) || findFriend(friends, name);
+      const friend = findFriend(friends, name) || findFriend(friends, result.name || name);
+      if (!friend) {
+        return { success: false, error: '好友已被删除，请刷新列表后重试' };
+      }
+      const recognizedName = (result.name || '').trim();
+      if (recognizedName && recognizedName !== friend.name) {
+        const duplicate = findFriend(friends, recognizedName);
+        if (!duplicate || duplicate === friend) {
+          friend.name = recognizedName;
+        }
+      }
+      if (result.douyin_id) friend.douyin_id = result.douyin_id;
+      if (result.avatar_file) friend.avatar_file = result.avatar_file;
+      if (!saveFriends(friends)) {
+        return { success: false, error: '识别成功，但写回好友配置失败' };
+      }
       return {
         success: true,
-        name: result.name || name,
+        name: friend.name,
         douyin_id: result.douyin_id || friend?.douyin_id || '',
         avatar_file: result.avatar_file || friend?.avatar_file || '',
       };

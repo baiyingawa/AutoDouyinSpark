@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage';
 import FriendsPage from './pages/FriendsPage';
 import HistoryPage from './pages/HistoryPage';
 import SettingsPage from './pages/SettingsPage';
+import StatusPage from './pages/StatusPage';
 
 const App: React.FC = () => {
   const [showAutoStartPrompt, setShowAutoStartPrompt] = useState(false);
@@ -60,6 +61,14 @@ const App: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/status"
+                element={
+                  <ProtectedRoute>
+                    <StatusPage />
                   </ProtectedRoute>
                 }
               />

@@ -94,6 +94,7 @@ const LoginPage: React.FC = () => {
 
   // 网页登录（打开浏览器等待用户登录，自动保存 Cookie）
   const handleWebLogin = useCallback(async () => {
+    if (loginActiveRef.current) return;
     setLoginStatus('loading');
     loginActiveRef.current = true;
     setErrorMsg(null);

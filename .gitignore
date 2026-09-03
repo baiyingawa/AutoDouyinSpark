@@ -11,8 +11,11 @@ email_config.json
 .spark_log
 .spark_send_pid
 .spark_refresh_pid
+login.lock
+login_browser.pid
 *.png
 !docs/screenshots/*.png
+!electron-app/src/renderer/assets/*.png
 
 # Python 缓存
 __pycache__/

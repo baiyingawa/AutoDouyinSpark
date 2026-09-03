@@ -126,6 +126,14 @@ export interface SchedulerStatusData {
   currentWindow: string | null;
   lastCheck: string | null;
   nextAction: string | null;
+  task?: {
+    exists: boolean;
+    state: string | null;
+    enabled: boolean;
+    nextRunTime: string | null;
+    lastRunTime: string | null;
+    lastResult: string | null;
+  };
 }
 
 /** 历史火花天数结果 */

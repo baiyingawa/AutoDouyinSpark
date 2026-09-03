@@ -29,11 +29,18 @@ function _onLoginSuccess(): void {
   }
 }
 
+let loginStartPromise: Promise<any> | null = null;
+
 export function registerAuthHandlers(): void {
   // 启动网页登录（打开浏览器等待用户登录，自动保存 Cookie）
   ipcMain.handle(IPC_CHANNELS.AUTH_START_QRCODE, async () => {
     try {
-      const result = await pythonEngine.loginStart();
+      if (!loginStartPromise) {
+        loginStartPromise = pythonEngine.loginStart().finally(() => {
+          loginStartPromise = null;
+        });
+      }
+      const result = await loginStartPromise;
       // 登录成功后确认计划任务
       if (result.success) {
         _onLoginSuccess();

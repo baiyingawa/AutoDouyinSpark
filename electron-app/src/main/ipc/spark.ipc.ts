@@ -5,6 +5,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
 import { getDefaultScheduler } from '../scheduler';
+import { getSparkSchedulerTaskStatus } from '../task-scheduler';
 
 export function registerSparkHandlers(): void {
   // 发送火花
@@ -88,6 +89,7 @@ export function registerSparkHandlers(): void {
   // 调度器状态
   ipcMain.handle(IPC_CHANNELS.SPARK_SCHEDULER_STATUS, async () => {
     const scheduler = getDefaultScheduler();
-    return { success: true, running: scheduler.isRunning() };
+    const task = await getSparkSchedulerTaskStatus();
+    return { success: true, ...scheduler.getStatus(), task };
   });
 }

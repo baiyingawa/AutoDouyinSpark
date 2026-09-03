@@ -1,6 +1,6 @@
 {
   "name": "auto-douyin-spark",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "AutoDouyinSpark - TikTok automation desktop app",
   "main": "dist/main/index.js",
   "scripts": {
@@ -29,6 +29,6 @@
     "react": "^18.3.0",
     "react-chartjs-2": "^5.2.0",
     "react-dom": "^18.3.0",
-    "react-router-dom": "^7.0.0"
+    "react-router-dom": "^7.18.2"
   }
 }

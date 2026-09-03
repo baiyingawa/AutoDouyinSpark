@@ -145,7 +145,21 @@ export interface ElectronAPI {
   sparkSend: (force?: boolean) => Promise<SparkSendResult>;
   sparkStatus: () => Promise<SparkStatusResult>;
   sparkRefreshDays: (force?: boolean) => Promise<{ success: boolean }>;
-  sparkSchedulerStatus: () => Promise<{ success: boolean; running: boolean }>;
+  sparkSchedulerStatus: () => Promise<{
+    success: boolean;
+    running: boolean;
+    currentWindow: string | null;
+    lastCheck: string | null;
+    nextAction: string | null;
+    task: {
+      exists: boolean;
+      state: string | null;
+      enabled: boolean;
+      nextRunTime: string | null;
+      lastRunTime: string | null;
+      lastResult: string | null;
+    };
+  }>;
 
   // 历史
   historySparkDays: () => Promise<HistorySparkDaysResult>;

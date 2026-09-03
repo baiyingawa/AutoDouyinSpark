@@ -159,6 +159,31 @@ def _get_login_check_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".spark_login_check")
 
 
+def _read_fresh_login_cache(data_dir: str):
+    """读取网页登录刚写入的缓存，避免登录校验依赖完整业务模块。"""
+    cookie_path = _get_cookie_path(data_dir)
+    cache_path = _get_login_check_path(data_dir)
+    if not os.path.exists(cookie_path) or not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cookie_path, "r", encoding="utf-8") as f:
+            cookies = json.load(f)
+        if not isinstance(cookies, list) or not cookies:
+            return None
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        if cached.get("valid") is not True:
+            return None
+        checked_at = datetime.fromisoformat(cached.get("checked_at", ""))
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=CHINA_TZ)
+        if (datetime.now(CHINA_TZ) - checked_at).total_seconds() >= 3600:
+            return None
+        return cached
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 # ─── Action 实现 ────────────────────────────────────────
 
 
@@ -342,10 +367,16 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
     if hasattr(spark, '_rebind_paths'):
         spark._rebind_paths()
 
-    screenshots_before = set()
+    screenshots_before = {}
     ss_dir = os.path.join(data_dir, "screenshots")
     if os.path.isdir(ss_dir):
-        screenshots_before = set(os.listdir(ss_dir))
+        for name in os.listdir(ss_dir):
+            path = os.path.join(ss_dir, name)
+            if os.path.isfile(path):
+                try:
+                    screenshots_before[name] = (os.path.getmtime(path), os.path.getsize(path))
+                except OSError:
+                    pass
 
     # 记录上次失败用户列表
     prev_failed_path = os.path.join(data_dir, ".spark_failed_users")
@@ -382,8 +413,7 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         spark.send_to_friend = _tracked_send
 
     try:
-        spark.main(force=force)
-        success = True
+        success = spark.main(force=force) is True
     except Exception as e:
         success = False
         if json_mode:
@@ -397,8 +427,19 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         pass
 
     # 收集本次截图
-    screenshots_after = set(os.listdir(ss_dir)) if os.path.isdir(ss_dir) else set()
-    new_screenshots = list(screenshots_after - screenshots_before)
+    screenshots_after = {}
+    if os.path.isdir(ss_dir):
+        for name in os.listdir(ss_dir):
+            path = os.path.join(ss_dir, name)
+            if os.path.isfile(path):
+                try:
+                    screenshots_after[name] = (os.path.getmtime(path), os.path.getsize(path))
+                except OSError:
+                    pass
+    new_screenshots = sorted(
+        name for name, stamp in screenshots_after.items()
+        if name not in screenshots_before or screenshots_before[name] != stamp
+    )
 
     result = {
         "success": success,
@@ -505,7 +546,11 @@ def action_login_poll(data_dir: str, json_mode: bool = True) -> dict:
     try:
         from login_helper import poll_login
         status = poll_login(data_dir)
-        result = {"success": True, "status": status.get("status", "pending")}
+        result = {
+            "success": True,
+            "status": status.get("status", "pending"),
+            "cookieCount": status.get("cookieCount", 0),
+        }
     except ImportError as e:
         result = {"success": False, "error": f"login_helper 模块导入失败: {e}"}
     except Exception as e:
@@ -550,6 +595,15 @@ def action_login_import(data_dir: str, stdin_data: str = "", json_mode: bool = T
 def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
     """检测 Cookie 是否有效"""
     _ensure_data_dir(data_dir)
+    cached = _read_fresh_login_cache(data_dir)
+    if cached is not None:
+        result = {
+            "success": True,
+            "valid": True,
+            "checkedAt": cached.get("checked_at", ""),
+        }
+        _json_out(result, json_mode)
+        return result
     spark = _import_douyin_spark()
     if spark is None:
         result = {"success": False, "valid": False, "error": "无法导入 douyin_spark 模块"}

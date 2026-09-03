@@ -6,6 +6,7 @@ import {
   Users,
   History,
   Settings,
+  Activity,
   LogIn,
   PanelRightOpen,
   PanelRightClose,
@@ -23,6 +24,7 @@ const defaultNavItems: SidebarNavItem[] = [
   { to: '/friends', icon: Users, label: '好友' },
   { to: '/history', icon: History, label: '历史' },
   { to: '/settings', icon: Settings, label: '设置' },
+  { to: '/status', icon: Activity, label: '状态' },
   { to: '/login', icon: LogIn, label: '登录' },
 ];
 

@@ -11,6 +11,8 @@ import sys
 import re
 import unicodedata
 import ctypes
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 
@@ -121,8 +123,15 @@ if os.path.exists(_CONFIG_FILE):
                 TARGET_USERS = _users
     except Exception:
         pass
-# 去重：防止配置文件中用户重复导致同一人发送多次
-TARGET_USERS = list(dict.fromkeys(TARGET_USERS))
+# 去重：配置既支持字符串，也支持包含 name 字段的好友对象。
+_seen_target_users = set()
+_deduped_target_users = []
+for _target_user in TARGET_USERS:
+    _target_name = _target_user.get("name", "") if isinstance(_target_user, dict) else _target_user
+    if _target_name and _target_name not in _seen_target_users:
+        _seen_target_users.add(_target_name)
+        _deduped_target_users.append(_target_name)
+TARGET_USERS = _deduped_target_users
 COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
 STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
 STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
@@ -135,6 +144,7 @@ AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
 LOCK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_lock")
 CHINA_TZ = timezone(timedelta(hours=8))
 _PID = os.getpid()  # 用于日志标记 + 并发锁
+_DATA_WRITE_LOCK = threading.Lock()
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
 HEADLESS = True
@@ -148,30 +158,26 @@ def _acquire_lock(timeout=10):
     import time as _time
     waited = 0
     while waited < timeout:
-        if os.path.exists(LOCK_FILE):
-            try:
-                with open(LOCK_FILE, "r") as f:
-                    old_pid = int(f.read().strip())
-                # 检查旧进程是否还在运行
-                os.kill(old_pid, 0)
-                # 旧进程还在，等待
-                _time.sleep(1)
-                waited += 1
-                continue
-            except (ValueError, PermissionError, NotADirectoryError):
-                os.remove(LOCK_FILE)
-            except OSError:
-                # 旧进程不存在，清理锁文件
-                try:
-                    os.remove(LOCK_FILE)
-                except:
-                    pass
         try:
-            with open(LOCK_FILE, "w") as f:
+            fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w") as f:
                 f.write(str(_PID))
             return True
-        except:
-            pass
+        except FileExistsError:
+            try:
+                with open(LOCK_FILE, "r", encoding="utf-8") as f:
+                    old_pid = int(f.read().strip())
+                os.kill(old_pid, 0)
+            except (ValueError, PermissionError, NotADirectoryError, OSError):
+                try:
+                    os.remove(LOCK_FILE)
+                except OSError:
+                    pass
+            _time.sleep(1)
+            waited += 1
+        except OSError:
+            _time.sleep(1)
+            waited += 1
     return False
 
 
@@ -208,6 +214,19 @@ def _strip_invisible(text):
     for ch in ("\u200b", "\u200c", "\u200d", "\ufeff", "\u00a0"):
         text = text.replace(ch, "")
     return unicodedata.normalize("NFC", text)
+
+
+def _clean_chat_display_name(text):
+    """去掉聊天列表拼接到昵称后的火花标记和进度信息。"""
+    cleaned = _strip_invisible((text or "").strip())
+    cleaned = re.sub(r"\s*[🔥]\s*\d+\s*$", "", cleaned)
+    cleaned = re.sub(r"\s*重燃中\s*\d+\s*/\s*\d+\s*$", "", cleaned)
+    return cleaned.strip()
+
+
+def _is_group_chat_title(text):
+    """抖音群聊标题会在末尾显示人数，例如“群名(536)”。"""
+    return bool(re.search(r"\(\s*\d+\s*\)\s*$", _strip_invisible(text or "")))
 
 
 def normalize_friend(user):
@@ -360,21 +379,19 @@ def _save_friend_avatar(page, friend, img_bytes=None, img_src=None):
         return None
     path = _avatar_path_for(friend)
     try:
-        with open(path, "wb") as f:
-            f.write(img_bytes)
+        import base64 as _b64
+        with _DATA_WRITE_LOCK:
+            with open(path, "wb") as f:
+                f.write(img_bytes)
+            avatars = {}
+            if os.path.exists(AVATARS_FILE):
+                with open(AVATARS_FILE, "r", encoding="utf-8") as f:
+                    avatars = json.load(f)
+            avatars[friend[FRIEND_NAME_KEY]] = "data:image/png;base64," + _b64.b64encode(img_bytes).decode("ascii")
+            with open(AVATARS_FILE, "w", encoding="utf-8") as f:
+                json.dump(avatars, f, ensure_ascii=False)
     except Exception:
         return None
-    import base64 as _b64
-    try:
-        avatars = {}
-        if os.path.exists(AVATARS_FILE):
-            with open(AVATARS_FILE, "r", encoding="utf-8") as f:
-                avatars = json.load(f)
-        avatars[friend[FRIEND_NAME_KEY]] = "data:image/png;base64," + _b64.b64encode(img_bytes).decode("ascii")
-        with open(AVATARS_FILE, "w", encoding="utf-8") as f:
-            json.dump(avatars, f, ensure_ascii=False)
-    except Exception:
-        pass
     return path
 
 
@@ -383,6 +400,9 @@ def _get_active_chat_title(page):
     try:
         titles = page.evaluate(
             """() => {
+                const preferred = Array.from(document.querySelectorAll('[class~="RightPanelHeadertitle"]'));
+                const preferredTexts = preferred.map(el => (el.textContent || '').trim()).filter(Boolean);
+                if (preferredTexts.length) return preferredTexts;
                 const minX = window.innerWidth * 0.2;
                 const out = [];
                 document.querySelectorAll('h1,h2,h3,h4,header,div,span,[class*="title"],[class*="name"]').forEach(el => {
@@ -396,10 +416,31 @@ def _get_active_chat_title(page):
         )
         for t in titles or []:
             if t:
-                return t
+                return _clean_chat_display_name(t)
     except Exception:
         pass
     return None
+
+
+def _get_active_chat_kind(page):
+    """返回 friend/group/unknown；群聊人数括号是硬禁止条件。"""
+    try:
+        return page.evaluate(
+            """() => {
+                const headers = Array.from(document.querySelectorAll('[class*="RightPanelHeader"]'));
+                for (const header of headers) {
+                    const r = header.getBoundingClientRect();
+                    if (r.width <= 0 || r.height <= 0) continue;
+                    const text = (header.innerText || header.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (/\\(\\s*\\d+\\s*\\)\\s*$/.test(text)) return 'group';
+                    if (header.querySelector('.commonConversationIconnoDrag')) return 'group';
+                    if (header.querySelector('.commonIMAvataravatarContainer, [class*="RightPanelHeadertitle"]')) return 'friend';
+                }
+                return 'unknown';
+            }"""
+        ) or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def _get_chat_header_avatar(page):
@@ -408,6 +449,11 @@ def _get_chat_header_avatar(page):
         src = page.evaluate(
             """() => {
                 const minX = window.innerWidth * 0.2;
+                const headerImages = Array.from(document.querySelectorAll('[class*="RightPanelHeader"] img')).filter(img => {
+                    const r = img.getBoundingClientRect();
+                    return img.src && r.width >= 24 && r.width <= 96 && r.height >= 24 && r.height <= 96 && r.x >= minX && r.y < 100;
+                });
+                if (headerImages.length) return headerImages[0].src;
                 let best = null;
                 document.querySelectorAll('img').forEach(img => {
                     const r = img.getBoundingClientRect();
@@ -432,7 +478,7 @@ def _extract_douyin_id_from_text(text):
 
 
 def _extract_douyin_id_via_panel(page):
-    """先读页面文本，再点头像打开资料面板读取「抖音号」。"""
+    """从聊天头像打开的个人页读取「抖音号」，不把聊天页文本当成个人页。"""
     try:
         body = page.locator("body").first.inner_text()[:20000]
     except Exception:
@@ -440,6 +486,55 @@ def _extract_douyin_id_via_panel(page):
     found = _extract_douyin_id_from_text(body)
     if found:
         return found
+
+    original_url = page.url
+    profile_card = page.locator('[data-apm-action="个人页卡片"]').first
+    try:
+        has_profile_card = profile_card.count() > 0 and profile_card.is_visible(timeout=1500)
+    except Exception:
+        has_profile_card = False
+
+    # 抖音聊天页的头像卡片会打开新的个人页标签；优先读取新页的正文。
+    if has_profile_card:
+        popup = None
+        try:
+            with page.context.expect_page(timeout=5000) as page_info:
+                profile_card.click(timeout=5000)
+            popup = page_info.value
+            popup.wait_for_load_state("domcontentloaded", timeout=30000)
+            time.sleep(2)
+            try:
+                body = popup.locator("body").first.inner_text()[:30000]
+            except Exception:
+                body = ""
+            found = _extract_douyin_id_from_text(body)
+            try:
+                popup.close()
+            except Exception:
+                pass
+            if found:
+                return found
+        except Exception:
+            if popup:
+                try:
+                    popup.close()
+                except Exception:
+                    pass
+
+        # 某些版本会在当前标签页打开个人页，读取后回到聊天页。
+        try:
+            time.sleep(2)
+            body = page.locator("body").first.inner_text()[:30000]
+            found = _extract_douyin_id_from_text(body)
+            if page.url != original_url:
+                page.go_back(wait_until="domcontentloaded", timeout=30000)
+                time.sleep(1)
+            if found:
+                return found
+        except Exception:
+            pass
+
+    # 兼容未渲染个人页卡片的旧版页面：点击聊天头部头像，读取弹出的资料面板。
     try:
         clicked = page.evaluate(
             """() => {
@@ -556,6 +651,46 @@ def _click_send_button(page):
     return False
 
 
+def _click_private_search_result(page, keyword):
+    """只点击精确匹配且没有人数括号的好友会话，绝不点击泛化的“发消息”。"""
+    try:
+        result = page.evaluate(
+            """(target) => {
+                const searchItems = Array.from(document.querySelectorAll('[class*="SearchPanelitembox"]'));
+                const searchItem = searchItems.find((candidate) => {
+                    const title = candidate.querySelector('[class*="SearchPanelitemtitle"]');
+                    return (title?.textContent || '').replace(/\\s+/g, ' ').trim() === target &&
+                        !/\\(\\s*\\d+\\s*\\)\\s*$/.test((title?.textContent || '').trim());
+                });
+                if (searchItem) {
+                    const chatButton = searchItem.querySelector('[class*="SearchPanelitemchat_btn"]');
+                    (chatButton || searchItem).click();
+                    return { clicked: true, name: target, source: 'search_panel' };
+                }
+                const rows = Array.from(document.querySelectorAll('[data-e2e="conversation-item"]'));
+                const row = rows.find((candidate) => {
+                    const title = candidate.querySelector('.conversationConversationItemtitle');
+                    const name = (title?.textContent || '').replace(/\\s+/g, ' ').trim();
+                    return name === target &&
+                        !/\\(\\s*\\d+\\s*\\)\\s*$/.test(name) &&
+                        !candidate.querySelector('.commonConversationIconnoDrag') &&
+                        !!candidate.querySelector('.commonIMAvataravatarContainer');
+                });
+                if (!row) return { clicked: false, reason: 'private_result_not_found' };
+                row.scrollIntoView({ block: 'center' });
+                (row.querySelector('.conversationConversationItemrowArea2') || row).click();
+                return { clicked: true, name: row.querySelector('.conversationConversationItemtitle')?.textContent?.trim() || target };
+            }""",
+            keyword,
+        )
+        if result and result.get("clicked"):
+            time.sleep(1.5)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _click_result_img(page, index):
     try:
         ok = page.evaluate(
@@ -603,18 +738,10 @@ def _search_and_open(page, keyword):
     """搜索关键词并打开会话。"""
     if not _fill_search(page, keyword):
         return False
-    if _click_send_button(page) and _wait_chat_ready(page, 6):
+    # 只能点击精确的好友会话行；不能点击页面上第一个“发消息”按钮。
+    if _click_private_search_result(page, keyword) and _wait_chat_ready(page, 6):
         return True
-    try:
-        result = page.locator(f'text={keyword}').first
-        if result.count() > 0:
-            result.click(timeout=3000)
-            time.sleep(1.5)
-    except Exception:
-        pass
-    if _wait_chat_ready(page, 5):
-        return True
-    return _enter_chat_fallback(page) and _wait_chat_ready(page, 5)
+    return False
 
 
 def _search_and_open_by_avatar(page, friend, stored_path):
@@ -654,36 +781,13 @@ def _search_and_open_by_avatar(page, friend, stored_path):
 
 
 def _verify_chat_target(page, friend, title):
-    """校验当前聊天窗口属于目标好友；标题变化时用头像二次确认。"""
+    """校验当前聊天窗口属于目标好友；群聊或无法判定的窗口一律禁止发送。"""
     name = friend[FRIEND_NAME_KEY]
+    if _is_group_chat_title(title) or _get_active_chat_kind(page) == "group":
+        log(f"  ⛔ 检测到群聊窗口「{title or name}」，禁止发送")
+        return False, name
     if title and name and title == name:
         return True, title
-    if title and name and (name in title or title in name):
-        return True, title
-    # 标题不同 → 用历史头像比对，防止误发
-    src, img_bytes = _get_chat_header_avatar(page)
-    if img_bytes:
-        stored = None
-        cand_name = friend.get(FRIEND_AVATAR_KEY) or ""
-        candidates = [cand_name, os.path.basename(_avatar_path_for(friend))]
-        for cand in candidates:
-            if not cand:
-                continue
-            p = os.path.join(AVATAR_DIR, cand)
-            if os.path.exists(p):
-                stored = p
-                break
-        if stored:
-            try:
-                with open(stored, "rb") as f:
-                    stored_bytes = f.read()
-                dh1 = _dhash_of_bytes(page, stored_bytes)
-                dh2 = _dhash_of_bytes(page, img_bytes)
-                if _dhash_distance(dh1, dh2) <= _AVATAR_MATCH_THRESHOLD:
-                    log(f"  🖼️ 头像匹配成功（标题已变更为「{title}」）")
-                    return True, (title or name)
-            except Exception:
-                pass
     return False, name
 
 
@@ -730,7 +834,7 @@ def _migrate_cache_key(path, field, old_name, new_name):
         pass
 
 
-def update_friend_in_config(old_name, new_name=None, douyin_id=None, avatar_file=None):
+def _update_friend_in_config_unlocked(old_name, new_name=None, douyin_id=None, avatar_file=None):
     """更新 spark_config.json 中的好友字段；成功后同步全局列表并迁移缓存键。"""
     try:
         if not os.path.exists(_CONFIG_FILE):
@@ -773,6 +877,11 @@ def update_friend_in_config(old_name, new_name=None, douyin_id=None, avatar_file
         return False
 
 
+def update_friend_in_config(old_name, new_name=None, douyin_id=None, avatar_file=None):
+    with _DATA_WRITE_LOCK:
+        return _update_friend_in_config_unlocked(old_name, new_name, douyin_id, avatar_file)
+
+
 def send_to_friend(page, friend, msg):
     """多层级定位并发送：
     1) 按备注名搜索；2) 按抖音号搜索；3) 头像匹配搜索结果。
@@ -803,7 +912,7 @@ def send_to_friend(page, friend, msg):
         if not ok:
             continue
 
-        title = _get_active_chat_title(page)
+        title = _clean_chat_display_name(_get_active_chat_title(page) or "")
         verified, new_name = _verify_chat_target(page, friend, title)
         if not verified:
             log(f"  ❌ [{kind}] 当前窗口不是「{name}」，跳过以避免误发")
@@ -821,11 +930,9 @@ def send_to_friend(page, friend, msg):
             if saved_path:
                 saved_file = os.path.basename(saved_path)
                 log(f"  📸 头像已保存: {saved_file}")
+        # 抖音号识别只在“识别好友”操作中执行；发送流程不点击头像，
+        # 保证发送成功后的截图仍然停留在刚刚校验过的私聊窗口。
         found_id = ""
-        if not douyin_id:
-            found_id = _extract_douyin_id_via_panel(page)
-            if found_id:
-                log(f"  🆔 识别到抖音号: {found_id}")
         if new_name != name or found_id or saved_file:
             update_friend_in_config(
                 old_name=name,
@@ -836,6 +943,132 @@ def send_to_friend(page, friend, msg):
         return {"ok": True, "name": new_name, "douyin_id": found_id or douyin_id}
 
     return {"ok": False, "name": name, "douyin_id": douyin_id}
+
+
+def _save_spark_screenshot(page, display_name, shot_time):
+    """把已校验私聊窗口原子保存到共享数据目录，避免半截 PNG。"""
+    ss_dir = os.path.join(SHARED_DATA_DIR, "screenshots")
+    os.makedirs(ss_dir, exist_ok=True)
+    safe = re.sub(r'[\\/:*?"<>|]', "_", display_name).strip() or "friend"
+    final_path = os.path.join(ss_dir, f"{shot_time.strftime('%Y-%m-%d')}_{safe}.png")
+    temp_path = final_path + ".tmp.png"
+    try:
+        page.screenshot(path=temp_path, full_page=False)
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            return None
+        os.replace(temp_path, final_path)
+        return final_path
+    except Exception as e:
+        log(f"  ⚠️ 截图保存失败: {e}")
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+        return None
+
+
+def _send_friend_worker(friend, msg, cookies, shot_time):
+    """单个好友独立浏览器会话；每个 worker 只允许操作一个私聊。"""
+    browser = None
+    playwright_ctx = None
+    name = friend.get(FRIEND_NAME_KEY, "")
+    try:
+        playwright_ctx = sync_playwright()
+        p = playwright_ctx.__enter__()
+        launch_kwargs = {"headless": HEADLESS}
+        if CHROMIUM_EXECUTABLE:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36",
+        )
+        context.add_cookies(cookies)
+        page = context.new_page()
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(2)
+        _dismiss_trust_dialog(page)
+        page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
+        time.sleep(4)
+        _dismiss_trust_dialog(page)
+        result = send_to_friend(page, friend, msg)
+        if result.get("ok"):
+            final_name = result.get("name") or name
+            shot = _save_spark_screenshot(page, final_name, shot_time)
+            result["screenshot"] = shot
+            if shot:
+                log(f"  📸 火花截图已保存: {os.path.basename(shot)}")
+        return result
+    except LoginExpiredException:
+        raise
+    except Exception as e:
+        log(f"  ❌ 「{name}」worker 异常: {e}")
+        return {"ok": False, "name": name, "douyin_id": "", "error": str(e)}
+    finally:
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        if playwright_ctx is not None:
+            try:
+                playwright_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+
+
+def _run_spark_session_parallel(force=False):
+    """最多 8 个独立浏览器并发续火花；同一进程内每个好友只提交一次。"""
+    now = datetime.now(CHINA_TZ)
+    msg_template = "[Auto]火花火花！{time}"
+    try:
+        if os.path.exists(_CONFIG_FILE):
+            with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            msg_template = cfg.get("message_template") or msg_template
+    except Exception:
+        pass
+    msg = msg_template.replace("{time}", now.strftime("%Y-%m-%d %H:%M:%S"))
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        cookies = normalize_cookies(json.load(f), ".douyin.com")
+
+    friends = []
+    seen = set()
+    selected_names = set(TARGET_USERS)
+    for friend in TARGET_FRIENDS:
+        name = friend.get(FRIEND_NAME_KEY, "")
+        if name and name in selected_names and name not in seen:
+            seen.add(name)
+            friends.append(dict(friend))
+    log(f"🚀 并发续火花启动: {len(friends)} 人，最大 8 线程")
+    if not friends:
+        return False
+
+    all_ok = True
+    with ThreadPoolExecutor(max_workers=min(8, len(friends)), thread_name_prefix="spark") as pool:
+        futures = {pool.submit(_send_friend_worker, friend, msg, cookies, now): friend for friend in friends}
+        for future in as_completed(futures):
+            friend = futures[future]
+            name = friend.get(FRIEND_NAME_KEY, "")
+            try:
+                result = future.result()
+            except LoginExpiredException:
+                raise
+            except Exception as e:
+                log(f"❌ 「{name}」发送异常: {e}")
+                all_ok = False
+                continue
+            if result.get("ok"):
+                log(f"✅ 「{result.get('name') or name}」发送成功")
+            else:
+                log(f"❌ 「{name}」发送失败，未写入消息")
+                all_ok = False
+    try:
+        _update_spark_days()
+    except Exception as e:
+        log(f"⚠️ 并发发送后刷新火花天数失败: {e}")
+    return all_ok
 
 
 def identify_friend(keyword):
@@ -868,7 +1101,7 @@ def identify_friend(keyword):
         _dismiss_trust_dialog(page)
         if not _search_and_open(page, keyword):
             return {**result, "error": "搜索不到该好友"}
-        title = _get_active_chat_title(page) or keyword
+        title = _clean_chat_display_name(_get_active_chat_title(page) or keyword)
         douyin_id = _extract_douyin_id_via_panel(page)
         src, img_bytes = _get_chat_header_avatar(page)
         saved_file = ""
@@ -1653,7 +1886,7 @@ def _scrape_spark_days(page, expand_list=True):
 
 
 def _scrape_avatars(page):
-    """从聊天页面抓取用户头像 URL，按坐标匹配用户名"""
+    """从聊天页面抓取头像：按会话行匹配，且一张头像只能归属一个好友。"""
     try:
         targets = list(TARGET_USERS)
         if not targets:
@@ -1666,49 +1899,33 @@ def _scrape_avatars(page):
         time.sleep(2)
 
         data = page.evaluate("""(targetNames) => {
-            // 1. 收集所有包含用户名的文本位置（扩大元素类型）
-            const nameItems = [];
-            const allEls = document.querySelectorAll('div, span, li, a, p, section, h1, h2, h3, h4, h5, h6, button');
-            allEls.forEach(el => {
-                const text = (el.textContent || '').trim();
-                if (text.length === 0 || text.length > 200) return;
-                for (const name of targetNames) {
-                    if (text.includes(name) && text.length < name.length + 80) {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0 && r.width < 400) {
-                            nameItems.push({ name, x: r.x, y: r.y, w: r.width, h: r.height });
-                        }
-                    }
-                }
-            });
-            // 2. 收集头像图片（>=32px，放宽尺寸限制）
-            const avatarImgs = [];
-            document.querySelectorAll('img').forEach(img => {
+            const isAvatar = (img) => {
                 const src = img.src || '';
-                if (!src || src.includes('svg')) return;
                 const r = img.getBoundingClientRect();
-                if (r.width < 32 || r.height < 32 || r.width > 200 || r.height > 200) return;
-                avatarImgs.push({ x: r.x, y: r.y, w: r.width, h: r.height, src });
-            });
-            // 3. 垂直距离匹配
-            const results = {};
-            for (const name of targetNames) {
-                const userItems = nameItems.filter(i => i.name === name);
-                if (userItems.length === 0) continue;
-                let best = null, bestScore = Infinity;
-                for (const pos of userItems) {
-                    for (const img of avatarImgs) {
-                        const vDist = Math.abs(img.y + img.h/2 - (pos.y + pos.h/2));
-                        if (vDist < 100 && vDist < bestScore) {
-                            bestScore = vDist;
-                            best = img.src;
-                        }
-                    }
+                return src && !src.startsWith('data:') && !src.includes('svg') &&
+                    r.width >= 32 && r.height >= 32 && r.width <= 200 && r.height <= 200;
+            };
+            const rows = Array.from(document.querySelectorAll('[class*="conversationConversationItem"]'));
+                const results = {};
+                const usedSources = new Set();
+                let matchedRows = 0;
+                for (const row of rows) {
+                    const text = (row.innerText || row.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (!text || text.length > 180) continue;
+                    const name = targetNames.find((candidate) => {
+                        if (!text.startsWith(candidate)) return false;
+                        const next = text.charAt(candidate.length);
+                        return !next || /[\\s🔥]/.test(next);
+                    });
+                    if (!name || results[name]) continue;
+                    const images = Array.from(row.querySelectorAll('img')).filter(isAvatar);
+                    if (images.length !== 1 || usedSources.has(images[0].src)) continue;
+                    results[name] = images[0].src;
+                    usedSources.add(images[0].src);
+                    matchedRows += 1;
                 }
-                if (best) results[name] = best;
-            }
-            results['__debug'] = 'names=' + nameItems.length + ' imgs=' + avatarImgs.length;
-            return results;
+                results['__debug'] = 'rows=' + rows.length + ' matched=' + matchedRows;
+                return results;
         }""", targets)
         debug_info = data.pop('__debug', '')
         log(f"  📊 头像扫描: {debug_info}")
@@ -2057,12 +2274,12 @@ def main(force=False):
     # === 快速检查：没有 Cookie 文件就跳过（不开浏览器） ===
     if not os.path.exists(COOKIE_FILE):
         log("⚠️ 未检测到 Cookie 文件，请先登录后再试")
-        return
+        return False
 
     # === 并发互斥锁 ===
     if not _acquire_lock():
         log("⚠️ 已有另一个火花会话正在运行（锁文件被占用），跳过本次执行")
-        return
+        return False
 
     try:
         t_start = time.time()
@@ -2079,7 +2296,7 @@ def main(force=False):
         # === 已发送则跳过 ===
         if not force and already_sent_today():
             log("⏭️ 今天已经发送过，跳过")
-            return
+            return False
 
         # === 检查时间窗口 ===
         window = in_time_window()
@@ -2087,13 +2304,13 @@ def main(force=False):
 
         if not at_window:
             log("⏭️ 不在允许的时间窗口内，跳过")
-            return
+            return False
 
         # === 单次浏览器会话：抓天数 → 发送 → 再抓天数 ===
         log(f"🕐 在 {'force' if force else window} 状态，开始火花会话")
         success = False
         try:
-            success = _run_spark_session(force=force)
+            success = _run_spark_session_parallel(force=force)
         except LoginExpiredException:
             log("🔒 Cookie 已过期，请重新登录后再试")
         except Exception as e:
@@ -2105,6 +2322,7 @@ def main(force=False):
             log(f"🎉 全部发送成功，耗时 {elapsed:.0f}s，状态已记录")
         else:
             log(f"❌ 部分发送失败，耗时 {elapsed:.0f}s，状态未记录")
+        return success
     finally:
         _release_lock()
 
