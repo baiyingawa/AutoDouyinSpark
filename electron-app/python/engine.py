@@ -155,6 +155,45 @@ def _get_days_history_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".spark_days_history")
 
 
+def _get_send_history_path(data_dir: str) -> str:
+    return os.path.join(data_dir, ".spark_send_history")
+
+
+def _atomic_json_write(path: str, data):
+    """以临时文件替换方式写 JSON，避免并发读取到半截内容。"""
+    temp_path = f"{path}.{os.getpid()}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp_path, path)
+
+
+def _append_send_history(data_dir: str, users: list[str], force: bool, success: bool):
+    """记录本次实际发送成功的好友，供首页和历史页展示。"""
+    if not users:
+        return
+    history_path = _get_send_history_path(data_dir)
+    history = []
+    try:
+        if os.path.exists(history_path):
+            with open(history_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, list):
+                history = raw
+    except Exception:
+        history = []
+    now = datetime.now(CHINA_TZ)
+    history.append({
+        "timestamp": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "users": list(dict.fromkeys(users)),
+        "force": bool(force),
+        "success": bool(success),
+    })
+    _atomic_json_write(history_path, history[-500:])
+
+
 def _get_login_check_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".spark_login_check")
 
@@ -286,6 +325,23 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
         except:
             pass
 
+    send_records = []
+    send_history_path = _get_send_history_path(data_dir)
+    if os.path.exists(send_history_path):
+        try:
+            with open(send_history_path, "r", encoding="utf-8") as f:
+                raw_records = json.load(f)
+            if isinstance(raw_records, list):
+                send_records = raw_records[-100:]
+        except Exception:
+            pass
+    today_users = []
+    for record in send_records:
+        if isinstance(record, dict) and record.get("date") == today:
+            for user in record.get("users", []):
+                if user not in today_users:
+                    today_users.append(user)
+
     result = {
         "success": True,
         "sentToday": sent_today,
@@ -297,6 +353,8 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
         "cookieNames": cookie_names,
         "avatars": avatars,
         "lastSend": last_send,
+        "sentUsers": today_users,
+        "sendRecords": send_records,
         "schedulerRunning": None,
     }
     _json_out(result, json_mode)
@@ -438,6 +496,12 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
             json.dump(failed_users, f, ensure_ascii=False)
     except:
         pass
+
+    try:
+        _append_send_history(data_dir, sent_users, force, success)
+    except Exception as e:
+        if json_mode:
+            print(f"[engine] 发送记录写入失败: {e}", file=sys.stderr)
 
     # 收集本次截图
     screenshots_after = {}

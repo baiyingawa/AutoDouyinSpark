@@ -16,6 +16,7 @@ interface SparkStatus {
   cookieNames?: string[];
   avatars?: Record<string, string>;
   lastSend: string | null;
+  sentUsers?: string[];
   schedulerRunning: boolean | null;
 }
 
@@ -162,6 +163,7 @@ const DashboardPage: React.FC = () => {
 
   // 好友数量独立于火花天数缓存，避免首页“今日状态”随天数列表联动。
   const friendCount = status?.days ? Object.keys(status.days).length : 0;
+  const todaySentUsers = status?.sentUsers || [];
 
   const today = new Date().toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -245,16 +247,22 @@ const DashboardPage: React.FC = () => {
           )}
 
           {/* 2x2 网格布局 */}
-          <div className="grid grid-cols-2 items-start gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-5">
             {/* 左上：今日状态 */}
             <div
-              className="p-6 rounded-lg border border-gray-700/50"
-              style={{ backgroundColor: 'var(--bg-secondary)' }}
+              className="relative overflow-hidden p-6 rounded-2xl border border-pink-400/20 shadow-xl shadow-black/10"
+              style={{
+                background: 'linear-gradient(135deg, rgba(233,69,96,0.20), var(--bg-secondary) 48%, rgba(22,33,62,0.96))',
+              }}
             >
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-white">今日状态</h2>
+              <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-pink-500/10 blur-2xl" />
+              <div className="relative flex items-center justify-between mb-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.22em] text-pink-200/60">TODAY</p>
+                  <h2 className="text-xl font-semibold text-white mt-1">今日状态</h2>
+                </div>
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${
+                  <div className={`w-2.5 h-2.5 rounded-full shadow-lg ${
                     status?.sentToday ? 'bg-green-400' : 'bg-yellow-400'
                   }`} />
                   <span className={`text-sm ${
@@ -265,8 +273,8 @@ const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-          <div className="grid grid-cols-2 items-start gap-4">
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#1a1a2e' }}>
+              <div className="relative grid grid-cols-2 items-start gap-3">
+                <div className="p-4 rounded-xl border border-white/5 bg-black/15">
                   <div className="flex items-center gap-2 mb-2">
                     <Flame size={16} style={{ color: 'var(--accent)' }} />
                     <span className="text-sm text-gray-400">本工具连续续火</span>
@@ -277,7 +285,7 @@ const DashboardPage: React.FC = () => {
                   <span className="text-sm text-gray-500 ml-1">天</span>
                 </div>
 
-                <div className="p-4 rounded-lg" style={{ backgroundColor: '#1a1a2e' }}>
+                <div className="p-4 rounded-xl border border-white/5 bg-black/15">
                   <div className="flex items-center gap-2 mb-2">
                     <Users size={16} style={{ color: '#60a5fa' }} />
                     <span className="text-sm text-gray-400">追踪好友</span>
@@ -289,27 +297,43 @@ const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              {status?.lastSend && (
-                <div className="mt-4 flex items-center gap-2 text-sm text-gray-500">
+              <div className="relative mt-4 rounded-xl border border-white/5 bg-black/15 px-4 py-3">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <CheckCircle size={14} className={status?.sentToday ? 'text-green-400' : 'text-gray-500'} />
+                  <span>{todaySentUsers.length > 0 ? `今日已发送给 ${todaySentUsers.length} 位好友` : '今日尚未完成发送'}</span>
+                </div>
+                {todaySentUsers.length > 0 && (
+                  <p className="mt-1 truncate text-sm text-white" title={todaySentUsers.join('、')}>
+                    {todaySentUsers.join('、')}
+                  </p>
+                )}
+                {status?.lastSend && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
                   <Clock size={14} />
                   <span>上次发送: {status.lastSend}</span>
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 右上：火花天数 */}
             {status?.days && Object.keys(status.days).length > 0 && (
               <div
-                className="p-6 rounded-lg border border-gray-700/50"
-                style={{ backgroundColor: 'var(--bg-secondary)' }}
+                className="p-6 rounded-2xl border border-blue-300/10 shadow-xl shadow-black/10"
+                style={{ background: 'linear-gradient(135deg, rgba(96,165,250,0.10), var(--bg-secondary) 55%)' }}
               >
-                <h2 className="text-lg font-semibold text-white mb-4">火花天数</h2>
+                <div className="flex items-end justify-between mb-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.22em] text-blue-200/50">STREAKS</p>
+                    <h2 className="text-xl font-semibold text-white mt-1">火花天数</h2>
+                  </div>
+                  <Flame size={24} className="text-orange-400" />
+                </div>
                 <div className="space-y-3">
                   {Object.entries(status.days).map(([username, days]) => (
                     <div
                       key={username}
-                      className="flex items-center justify-between p-3 rounded-lg"
-                      style={{ backgroundColor: '#1a1a2e' }}
+                      className="flex items-center justify-between p-3 rounded-xl border border-white/5 bg-black/15 transition-colors hover:bg-white/5"
                     >
                       <div className="flex items-center gap-3">
                         {status?.avatars?.[username] ? (
@@ -346,8 +370,8 @@ const DashboardPage: React.FC = () => {
 
             {/* 左下：Cookie 状态 */}
             <div
-              className="p-6 rounded-lg border border-gray-700/50 relative"
-              style={{ backgroundColor: 'var(--bg-secondary)' }}
+              className="p-6 rounded-2xl border border-gray-700/50 relative shadow-lg shadow-black/10"
+              style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.08), var(--bg-secondary) 55%)' }}
             >
               <div className="flex items-center justify-between w-full">
                 <div className="flex items-center gap-3">
@@ -422,8 +446,8 @@ const DashboardPage: React.FC = () => {
 
             {/* 右下：操作按钮 */}
             <div
-              className="p-6 rounded-lg border border-gray-700/50 flex items-center gap-4"
-              style={{ backgroundColor: 'var(--bg-secondary)' }}
+              className="p-6 rounded-2xl border border-gray-700/50 flex items-center gap-4 shadow-lg shadow-black/10"
+              style={{ background: 'linear-gradient(135deg, rgba(96,165,250,0.08), var(--bg-secondary) 55%)' }}
             >
               <button
                 className="flex-1 px-6 py-3 rounded-lg text-white font-medium transition-all duration-300 flex items-center justify-center gap-2"

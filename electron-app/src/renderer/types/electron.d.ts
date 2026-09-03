@@ -6,7 +6,17 @@ export interface SparkStatusResult {
   cookieValid: boolean;
   avatars?: Record<string, string>;
   lastSend: string | null;
+  sentUsers?: string[];
+  sendRecords?: SendRecord[];
   schedulerRunning: boolean | null;
+}
+
+export interface SendRecord {
+  timestamp: string;
+  date: string;
+  users: string[];
+  force: boolean;
+  success: boolean;
 }
 
 export interface SparkSendResult {
@@ -67,6 +77,7 @@ export interface HistorySparkDaysResult {
     days: Record<string, number>;
     prev_days?: Record<string, number>;
   }>;
+  sendRecords?: SendRecord[];
 }
 
 export interface ScreenshotsListResult {

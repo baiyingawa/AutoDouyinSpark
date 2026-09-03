@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { History, ChevronDown } from 'lucide-react';
+import { History, ChevronDown, Send, CheckCircle2, Clock3 } from 'lucide-react';
 import SparkDaysChart from '../components/SparkDaysChart';
 import ScreenshotGallery from '../components/ScreenshotGallery';
 
@@ -13,6 +13,14 @@ interface ScreenshotFile {
   name: string;
   size: number;
   mtime: string;
+}
+
+interface SendRecord {
+  timestamp: string;
+  date: string;
+  users: string[];
+  force: boolean;
+  success: boolean;
 }
 
 type TimeRange = '7d' | '15d' | '30d' | '1y';
@@ -63,6 +71,7 @@ const HistoryPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [screenshotsLoading, setScreenshotsLoading] = useState(true);
   const [avatars, setAvatars] = useState<Record<string, string>>({});
+  const [sendRecords, setSendRecords] = useState<SendRecord[]>([]);
 
   // 加载历史
   const loadHistory = useCallback(async () => {
@@ -71,6 +80,7 @@ const HistoryPage: React.FC = () => {
       const result = await window.electronAPI.historySparkDays();
       if (result.success) {
         setRecords(result.records || []);
+        setSendRecords(result.sendRecords || []);
       }
     } catch {
       // 忽略
@@ -198,6 +208,47 @@ const HistoryPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 火花天数趋势图 */}
+      <div
+        className="p-6 rounded-2xl border border-pink-300/10 shadow-lg shadow-black/10"
+        style={{ background: 'linear-gradient(135deg, rgba(233,69,96,0.10), var(--bg-secondary) 55%)' }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-pink-500/15 text-pink-300"><Send size={17} /></div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">发送记录</h2>
+              <p className="text-xs text-gray-500 mt-0.5">显示最近 100 条实际发送成功的好友</p>
+            </div>
+          </div>
+          <span className="text-sm text-gray-500">{sendRecords.length} 条</span>
+        </div>
+        {sendRecords.length === 0 ? (
+          <div className="rounded-xl border border-white/5 bg-black/15 py-6 text-center text-sm text-gray-500">
+            暂无发送记录
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-auto pr-1">
+            {[...sendRecords].reverse().slice(0, 20).map((record, index) => (
+              <div key={`${record.timestamp}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-black/15 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={15} className={record.success ? 'text-green-400' : 'text-yellow-400'} />
+                    <span className="text-sm text-white truncate">{record.users.join('、')}</span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                    <Clock3 size={12} />
+                    <span>{new Date(record.timestamp).toLocaleString('zh-CN')}</span>
+                    {record.force && <span className="rounded bg-pink-500/15 px-1.5 py-0.5 text-pink-300">强制</span>}
+                  </div>
+                </div>
+                <span className="shrink-0 text-xs text-green-400">已完成</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* 火花天数趋势图 */}
       <div

@@ -42,7 +42,18 @@ export function registerHistoryHandlers(): void {
         }
       }
 
-      return { success: true, records };
+      let sendRecords: any[] = [];
+      const sendHistoryPath = path.join(getDataDir(), '.spark_send_history');
+      if (fs.existsSync(sendHistoryPath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(sendHistoryPath, 'utf-8'));
+          if (Array.isArray(raw)) sendRecords = raw.slice(-100);
+        } catch {
+          // 发送记录损坏时不影响火花天数历史展示。
+        }
+      }
+
+      return { success: true, records, sendRecords };
     } catch (err) {
       return { success: false, records: [], error: String(err) };
     }

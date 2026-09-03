@@ -16,7 +16,18 @@ export interface SparkStatus {
   days: Record<string, number>;
   cookieValid: boolean;
   lastSend: string | null;
+  sentUsers?: string[];
+  sendRecords?: SendRecord[];
   schedulerRunning: boolean | null;
+}
+
+/** 实际发送记录 */
+export interface SendRecord {
+  timestamp: string;
+  date: string;
+  users: string[];
+  force: boolean;
+  success: boolean;
 }
 
 /** 好友信息 */

@@ -1079,7 +1079,41 @@ def _run_spark_session_parallel(force=False):
         _update_spark_days()
     except Exception as e:
         log(f"⚠️ 并发发送后刷新火花天数失败: {e}")
+    _record_days_history_from_cache()
     return all_ok
+
+
+def _record_days_history_from_cache():
+    """即使当天已确认并跳过刷新，也确保当天缓存进入历史记录。"""
+    if not os.path.exists(DAYS_CACHE):
+        return
+    try:
+        with open(DAYS_CACHE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        days = cache.get("days", {}) if isinstance(cache, dict) else {}
+        if not isinstance(days, dict) or not days:
+            return
+        today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
+        history = []
+        if os.path.exists(DAYS_HISTORY):
+            try:
+                with open(DAYS_HISTORY, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, list):
+                    history = raw
+            except Exception:
+                history = []
+        found = False
+        for entry in history:
+            if isinstance(entry, dict) and entry.get("date") == today_str:
+                entry["days"] = days
+                found = True
+                break
+        if not found:
+            history.append({"date": today_str, "days": days})
+        _atomic_json_write(DAYS_HISTORY, history)
+    except Exception as e:
+        log(f"⚠️ 从缓存补写历史记录失败: {e}")
 
 
 def identify_friend(keyword):

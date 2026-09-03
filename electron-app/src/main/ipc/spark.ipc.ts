@@ -54,6 +54,8 @@ export function registerSparkHandlers(): void {
         cookieNames: statusResult.cookieNames || [],
         avatars: statusResult.avatars || {},
         lastSend: statusResult.lastSend || null,
+        sentUsers: statusResult.sentUsers || [],
+        sendRecords: statusResult.sendRecords || [],
         schedulerRunning: scheduler.isRunning(),
       };
     } catch (err) {
