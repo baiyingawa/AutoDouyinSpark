@@ -9,9 +9,10 @@ import { getSparkSchedulerTaskStatus } from '../task-scheduler';
 
 export function registerSparkHandlers(): void {
   // 发送火花
-  ipcMain.handle(IPC_CHANNELS.SPARK_SEND, async (_event, force?: boolean) => {
+  ipcMain.handle(IPC_CHANNELS.SPARK_SEND, async (_event, force?: boolean, users?: string[]) => {
     try {
-      const result = await pythonEngine.send(!!force);
+      const selectedUsers = Array.isArray(users) ? users.filter((user) => typeof user === 'string' && user.trim()) : [];
+      const result = await pythonEngine.send(!!force, selectedUsers);
 
       // 发送后检查登录是否已过期
       const loginResult = await pythonEngine.checkLogin();

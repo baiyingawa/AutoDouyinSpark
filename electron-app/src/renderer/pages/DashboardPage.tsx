@@ -61,7 +61,7 @@ const DashboardPage: React.FC = () => {
 
   // 监听来自好友页的强制发送请求（通过 navigate state）
   useEffect(() => {
-    const state = location.state as { forceSendTriggered?: boolean } | null;
+    const state = location.state as { forceSendTriggered?: boolean; forceSendUsers?: string[] } | null;
     if (state?.forceSendTriggered) {
       // 清除 state，防止刷新重复触发
       navigate('/', { state: {}, replace: true });
@@ -70,7 +70,7 @@ const DashboardPage: React.FC = () => {
       setSending(true);
       window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
 
-      window.electronAPI.sparkSend(true).then(async (result) => {
+      window.electronAPI.sparkSend(true, state.forceSendUsers || []).then(async (result) => {
         if (result.success) {
           setForceSendMsg(`✅ 强制发送成功！(${result.sentCount} 条)`);
         } else {
@@ -160,7 +160,7 @@ const DashboardPage: React.FC = () => {
     setRefreshing(false);
   }, [loadStatus]);
 
-  // 好友数量
+  // 好友数量独立于火花天数缓存，避免首页“今日状态”随天数列表联动。
   const friendCount = status?.days ? Object.keys(status.days).length : 0;
 
   const today = new Date().toLocaleDateString('zh-CN', {
@@ -245,7 +245,7 @@ const DashboardPage: React.FC = () => {
           )}
 
           {/* 2x2 网格布局 */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 items-start gap-4">
             {/* 左上：今日状态 */}
             <div
               className="p-6 rounded-lg border border-gray-700/50"
@@ -265,7 +265,7 @@ const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 items-start gap-4">
                 <div className="p-4 rounded-lg" style={{ backgroundColor: '#1a1a2e' }}>
                   <div className="flex items-center gap-2 mb-2">
                     <Flame size={16} style={{ color: 'var(--accent)' }} />

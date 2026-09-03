@@ -193,6 +193,17 @@ def _release_lock():
         pass
 
 
+def _atomic_json_write(path, data):
+    """原子写入 JSON，避免进程中断留下 0 字节或半截历史文件。"""
+    temp_path = f"{path}.tmp.{_PID}"
+    with _DATA_WRITE_LOCK:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+
+
 # ==== 好友数据模型（备注名 / 抖音号 / 头像 三级匹配）====
 
 AVATAR_DIR = os.path.join(SHARED_DATA_DIR, "avatars")
@@ -1859,8 +1870,7 @@ def _scrape_spark_days(page, expand_list=True):
         elif "prev_days" in old_days:
             # 值没变则保留历史 prev_days
             cache_data["prev_days"] = old_days["prev_days"]
-        with open(DAYS_CACHE, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+        _atomic_json_write(DAYS_CACHE, cache_data)
         log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
 
         # 追加到历史记录文件（按日归档，供趋势图使用）
@@ -1879,8 +1889,7 @@ def _scrape_spark_days(page, expand_list=True):
                     break
             if not found:
                 history.append({"date": today_str, "days": result})
-            with open(DAYS_HISTORY, "w", encoding="utf-8") as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
+            _atomic_json_write(DAYS_HISTORY, history)
         except Exception as ex:
             log(f"⚠️ 写入历史记录失败: {ex}")
 

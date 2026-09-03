@@ -219,7 +219,7 @@ const FriendsPage: React.FC = () => {
   const [avatars, setAvatars] = useState<Record<string, string>>({});
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
-  const [identifying, setIdentifying] = useState<string | null>(null);
+  const [identifying, setIdentifying] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Friend | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -262,34 +262,49 @@ const FriendsPage: React.FC = () => {
   }, [loadFriends, loadStatus]);
 
   const handleAdd = useCallback(async () => {
-    const name = newUsername.trim();
-    if (!name) return;
+    const names = Array.from(new Set(newUsername.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
+    if (names.length === 0) return;
     setAdding(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await window.electronAPI.friendsAdd(name);
-      if (result.success) {
-        setNewUsername('');
+      const addedNames: string[] = [];
+      const addErrors: string[] = [];
+      // 配置写入按顺序完成；识别阶段再并发，避免添加时覆盖配置。
+      for (const name of names) {
+        const result = await window.electronAPI.friendsAdd(name);
+        if (result.success) addedNames.push(name);
+        else addErrors.push(`${name}：${result.error || '添加失败'}`);
+      }
+      setNewUsername('');
+      if (addedNames.length > 0) {
         await loadFriends();
         window.dispatchEvent(new CustomEvent('friends-changed'));
-        // 首次添加时自动识别抖音号与头像
-        setIdentifying(name);
-        try {
-          const ident = await window.electronAPI.friendsIdentify(name);
-          if (ident.success) {
-            setNotice('已自动识别「' + (ident.name || name) + '」' + (ident.douyin_id ? '，抖音号 ' + ident.douyin_id : ''));
-          } else {
-            setNotice('好友已添加；抖音号自动识别未完成：' + (ident.error || '未匹配到'));
-          }
-          await loadFriends();
-          window.dispatchEvent(new CustomEvent('friends-changed'));
-        } finally {
-          setIdentifying(null);
+        setIdentifying(new Set(addedNames));
+        const results: Array<{ success: boolean; error?: string; name?: string }> = [];
+        for (let offset = 0; offset < addedNames.length; offset += 8) {
+          const batch = addedNames.slice(offset, offset + 8);
+          results.push(...await Promise.all(batch.map(async (name) => {
+            try {
+              return await window.electronAPI.friendsIdentify(name);
+            } catch (error) {
+              return { success: false, error: String(error), name };
+            } finally {
+              setIdentifying((current) => {
+                const next = new Set(current);
+                next.delete(name);
+                return next;
+              });
+            }
+          })));
         }
-      } else {
-        setError(result.error || '添加失败');
+        const successCount = results.filter((result) => result.success).length;
+        const failed = results.filter((result) => !result.success).map((result, index) => `${addedNames[index]}：${result.error || '未匹配到'}`);
+        setNotice(`已添加 ${addedNames.length} 位好友，并发识别完成 ${successCount} 位${failed.length ? `；${failed.join('；')}` : ''}`);
+        await loadFriends();
+        window.dispatchEvent(new CustomEvent('friends-changed'));
       }
+      if (addErrors.length > 0) setError(addErrors.join('；'));
     } catch (err) {
       setError(String(err));
     }
@@ -307,8 +322,8 @@ const FriendsPage: React.FC = () => {
   }, [loadFriends]);
 
   const handleIdentify = useCallback(async (friend: Friend) => {
-    if (identifying) return;
-    setIdentifying(friend.name);
+    if (identifying.has(friend.name)) return;
+    setIdentifying((current) => new Set(current).add(friend.name));
     setError(null);
     setNotice(null);
     try {
@@ -328,7 +343,11 @@ const FriendsPage: React.FC = () => {
     } catch (err) {
       setError(String(err));
     } finally {
-      setIdentifying(null);
+      setIdentifying((current) => {
+        const next = new Set(current);
+        next.delete(friend.name);
+        return next;
+      });
     }
   }, [identifying, loadFriends, loadStatus]);
 
@@ -367,8 +386,8 @@ const FriendsPage: React.FC = () => {
 
   const handleForceSend = useCallback(() => {
     setSending(true);
-    navigate('/', { state: { forceSendTriggered: true } });
-  }, [navigate]);
+    navigate('/', { state: { forceSendTriggered: true, forceSendUsers: Array.from(selectedUsers) } });
+  }, [navigate, selectedUsers]);
 
   const handleCancel = useCallback(() => {
     navigate('/');
@@ -509,7 +528,7 @@ const FriendsPage: React.FC = () => {
               onRemove={handleRemove}
               onEdit={setEditing}
               onIdentify={handleIdentify}
-              identifying={identifying === friend.name}
+              identifying={identifying.has(friend.name)}
               sentToday={sentToday}
               avatarUrl={avatars[friend.name]}
               selectable={isForceSendMode}

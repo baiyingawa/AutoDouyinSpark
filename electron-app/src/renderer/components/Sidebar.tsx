@@ -34,6 +34,13 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
   const [expanded, setExpanded] = useState(true);
+  const [version, setVersion] = useState('');
+
+  React.useEffect(() => {
+    window.electronAPI.appVersion().then((result) => {
+      if (result.success) setVersion(result.version);
+    }).catch(() => {});
+  }, []);
 
   return (
     <nav
@@ -92,6 +99,9 @@ const Sidebar: React.FC<SidebarProps> = ({ navItems = defaultNavItems }) => {
 
       {/* 展开/折叠按钮 */}
       <div className="w-full px-2">
+        <div className={`text-[10px] text-gray-600 mb-2 ${expanded ? 'text-center' : 'text-center'}`}>
+          {version ? `v${version}` : ''}
+        </div>
         <button
           className="flex items-center rounded-lg transition-colors duration-200 w-full text-gray-400 hover:text-white hover:bg-gray-700/30"
           onClick={() => setExpanded(!expanded)}

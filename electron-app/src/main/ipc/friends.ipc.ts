@@ -88,6 +88,15 @@ function saveFriends(friends: FriendRecord[]): boolean {
   return writeConfig(config);
 }
 
+// 识别浏览器可以并发运行，但配置合并必须排队，避免多个结果互相覆盖。
+let friendConfigWriteQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueFriendConfigWrite<T>(operation: () => T | Promise<T>): Promise<T> {
+  const next = friendConfigWriteQueue.then(operation, operation);
+  friendConfigWriteQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 function findFriend(friends: FriendRecord[], name: string): FriendRecord | undefined {
   return friends.find((f) => f.name === name);
 }
@@ -187,29 +196,29 @@ export function registerFriendsHandlers(): void {
           error: (result && result.error) || '识别失败',
         };
       }
-      const friends = listFriends();
-      const friend = findFriend(friends, name) || findFriend(friends, result.name || name);
-      if (!friend) {
-        return { success: false, error: '好友已被删除，请刷新列表后重试' };
-      }
-      const recognizedName = (result.name || '').trim();
-      if (recognizedName && recognizedName !== friend.name) {
-        const duplicate = findFriend(friends, recognizedName);
-        if (!duplicate || duplicate === friend) {
-          friend.name = recognizedName;
+      return await enqueueFriendConfigWrite(() => {
+        const friends = listFriends();
+        const friend = findFriend(friends, name) || findFriend(friends, result.name || name);
+        if (!friend) {
+          return { success: false, error: '好友已被删除，请刷新列表后重试' };
         }
-      }
-      if (result.douyin_id) friend.douyin_id = result.douyin_id;
-      if (result.avatar_file) friend.avatar_file = result.avatar_file;
-      if (!saveFriends(friends)) {
-        return { success: false, error: '识别成功，但写回好友配置失败' };
-      }
-      return {
-        success: true,
-        name: friend.name,
-        douyin_id: result.douyin_id || friend?.douyin_id || '',
-        avatar_file: result.avatar_file || friend?.avatar_file || '',
-      };
+        const recognizedName = (result.name || '').trim();
+        if (recognizedName && recognizedName !== friend.name) {
+          const duplicate = findFriend(friends, recognizedName);
+          if (!duplicate || duplicate === friend) friend.name = recognizedName;
+        }
+        if (result.douyin_id) friend.douyin_id = result.douyin_id;
+        if (result.avatar_file) friend.avatar_file = result.avatar_file;
+        if (!saveFriends(friends)) {
+          return { success: false, error: '识别成功，但写回好友配置失败' };
+        }
+        return {
+          success: true,
+          name: friend.name,
+          douyin_id: result.douyin_id || friend.douyin_id || '',
+          avatar_file: result.avatar_file || friend.avatar_file || '',
+        };
+      });
     } catch (err) {
       return { success: false, error: String(err) };
     }

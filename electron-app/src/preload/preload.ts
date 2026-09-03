@@ -49,8 +49,8 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_IDENTIFY, username),
 
   // 续火花
-  sparkSend: (force?: boolean) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPARK_SEND, force),
+  sparkSend: (force?: boolean, users?: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPARK_SEND, force, users),
   sparkStatus: () =>
     ipcRenderer.invoke(IPC_CHANNELS.SPARK_STATUS),
   sparkRefreshDays: (force = false) =>

@@ -303,7 +303,7 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
     return result
 
 
-def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> dict:
+def action_send(data_dir: str, force: bool = False, users: list[str] | None = None, json_mode: bool = True) -> dict:
     """执行发送"""
     _ensure_data_dir(data_dir)
     spark = _import_douyin_spark()
@@ -366,6 +366,19 @@ def action_send(data_dir: str, force: bool = False, json_mode: bool = True) -> d
         spark.SHARED_DATA_DIR = data_dir
     if hasattr(spark, '_rebind_paths'):
         spark._rebind_paths()
+
+    # 强制发送可传入前端选中的目标；没有选择时才使用配置中的完整好友列表。
+    if users:
+        selected = []
+        seen = set()
+        for user in users:
+            name = str(user).strip()
+            if name and name not in seen:
+                seen.add(name)
+                selected.append(name)
+        spark.TARGET_USERS = selected
+        if hasattr(spark, 'TARGET_FRIENDS'):
+            spark.TARGET_FRIENDS = [friend for friend in spark.TARGET_FRIENDS if friend.get('name') in seen]
 
     screenshots_before = {}
     ss_dir = os.path.join(data_dir, "screenshots")
@@ -805,16 +818,7 @@ def action_identify_user(data_dir: str, username: str, json_mode: bool = True) -
         result = spark.identify_friend(username)
     except Exception as e:
         result = {"success": False, "error": str(e)}
-    if result.get("success") and result.get("name"):
-        try:
-            spark.update_friend_in_config(
-                old_name=username,
-                new_name=(result["name"] if result["name"] != username else None),
-                douyin_id=(result.get("douyin_id") or None),
-                avatar_file=(result.get("avatar_file") or None),
-            )
-        except Exception as e:
-            result["config_error"] = str(e)
+    # 配置写回由 Electron 主进程串行合并，允许多个识别进程并发运行时不互相覆盖。
     _json_out(result, json_mode)
     return result
 
@@ -846,6 +850,7 @@ def main():
     parser.add_argument("--action", required=True, choices=list(_ACTIONS.keys()), help="执行动作")
     parser.add_argument("--json", action="store_true", help="JSON 输出模式")
     parser.add_argument("--force", action="store_true", help="强制模式（用于 send 动作）")
+    parser.add_argument("--users", nargs="*", default=[], help="指定发送目标（用于 send 动作）")
     parser.add_argument("--file", help="文件名参数（用于 screenshot-get 动作）")
     parser.add_argument("--user", help="用户参数（用于 identify-user 动作）")
     args = parser.parse_args()
@@ -864,7 +869,7 @@ def main():
         elif args.action in ("login-import", "email-test"):
             action_fn(data_dir, json_mode=json_mode)
         elif args.action == "send":
-            action_fn(data_dir, force=args.force, json_mode=json_mode)
+            action_fn(data_dir, force=args.force, users=args.users, json_mode=json_mode)
         elif args.action == "refresh-days":
             action_fn(data_dir, force=args.force, json_mode=json_mode)
         elif args.action == "check-playwright":

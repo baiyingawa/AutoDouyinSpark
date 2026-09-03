@@ -6,7 +6,7 @@ import AppConfigForm from '../components/AppConfigForm';
 type SettingsTab = 'email' | 'app';
 
 const SettingsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('email');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('app');
   const [emailConfig, setEmailConfig] = useState<any>(null);
   const [appConfig, setAppConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -55,8 +55,8 @@ const SettingsPage: React.FC = () => {
   }, []);
 
   const tabs = [
-    { id: 'email' as SettingsTab, icon: Mail, label: '邮箱配置' },
     { id: 'app' as SettingsTab, icon: Sliders, label: '应用配置' },
+    { id: 'email' as SettingsTab, icon: Mail, label: '邮箱配置' },
   ];
 
   return (

@@ -19,9 +19,26 @@ export function registerHistoryHandlers(): void {
       const records: any[] = [];
 
       if (fs.existsSync(historyPath)) {
-        const raw = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
-        if (Array.isArray(raw)) {
-          records.push(...raw);
+        try {
+          const raw = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
+          if (Array.isArray(raw)) records.push(...raw);
+        } catch {
+          // 历史文件为空或上次写入中断时，下面从天数缓存恢复最近一条。
+        }
+      }
+      if (records.length === 0) {
+        const cachePath = path.join(getDataDir(), '.spark_days_cache');
+        try {
+          const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+          const days = cache?.days;
+          if (days && typeof days === 'object' && Object.keys(days).length > 0) {
+            records.push({
+              date: typeof cache.updated_at === 'string' ? cache.updated_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
+              days,
+            });
+          }
+        } catch {
+          // 没有可恢复的缓存时返回空历史。
         }
       }
 

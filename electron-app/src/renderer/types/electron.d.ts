@@ -142,7 +142,7 @@ export interface ElectronAPI {
   friendsIdentify: (username: string) => Promise<FriendsIdentifyResult>;
 
   // 续火花
-  sparkSend: (force?: boolean) => Promise<SparkSendResult>;
+  sparkSend: (force?: boolean, users?: string[]) => Promise<SparkSendResult>;
   sparkStatus: () => Promise<SparkStatusResult>;
   sparkRefreshDays: (force?: boolean) => Promise<{ success: boolean }>;
   sparkSchedulerStatus: () => Promise<{

@@ -83,8 +83,8 @@ export class PythonEngine {
   }
 
   // --- 发送 ---
-  async send(force: boolean = false): Promise<any> {
-    const extra = force ? ['--force'] : [];
+  async send(force: boolean = false, users: string[] = []): Promise<any> {
+    const extra = force ? ['--force', ...(users.length ? ['--users', ...users] : [])] : [];
     return this.callEngine('send', extra);
   }
 
