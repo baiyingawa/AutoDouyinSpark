@@ -118,6 +118,10 @@ export class PythonEngine {
     return this.callEngine('login-import', [], cookieJson);
   }
 
+  async identifySelf(): Promise<any> {
+    return this.callEngine('identify-self');
+  }
+
   async checkLogin(): Promise<any> {
     return this.callEngine('check-login');
   }

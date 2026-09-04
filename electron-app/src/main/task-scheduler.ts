@@ -14,7 +14,7 @@ import { app } from 'electron';
 import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { getSharedDataDir } from './shared-data-dir';
+import { getDataRootDir } from './shared-data-dir';
 
 const TASK_NAME = '\\AutoDouyinSparkEngine';
 
@@ -137,7 +137,8 @@ function createSparkSchedulerTask(): void {
   // 总是重新生成 VBS，确保路径正确（覆盖旧版本错误路径）
   {
     const escapedPath = appPath.replace(/'/g, "''");
-    const dataDir = getSharedDataDir();
+    // 传入根目录，由 engine.py 每次运行时解析当前账户，切换账户无需重写任务。
+    const dataDir = getDataRootDir();
     const vbsContent = `' AutoDouyinSpark 静默运行脚本（通过 engine.py 统一数据目录）
 Dim shell
 Set shell = CreateObject("WScript.Shell")

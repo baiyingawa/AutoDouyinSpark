@@ -12,11 +12,28 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
 import { ensureSparkSchedulerTask } from '../task-scheduler';
 import { shouldPromptAutoStart } from '../auto-launch';
+import { getActiveProfileId, getSharedDataDir, restoreProfileByDouyinId, updateProfileIdentity } from '../shared-data-dir';
+import { LogManager } from '../log-manager';
 
 /**
  * 登录成功后的统一处理：计划任务 + 通知前端开机自启弹窗
  */
-function _onLoginSuccess(): void {
+async function _onLoginSuccess(logManager?: LogManager): Promise<void> {
+  // 登录完成后读取个人页身份；同一抖音号重新导入时恢复被隐藏账户的数据。
+  try {
+    const identity = await pythonEngine.identifySelf();
+    if (identity?.success && identity.douyin_id) {
+      const restored = restoreProfileByDouyinId(identity.douyin_id, identity.name, identity.avatar_file);
+      if (restored) logManager?.init(path.join(getSharedDataDir(), '.spark_log'));
+      else updateProfileIdentity(getActiveProfileId(), {
+        name: identity.name,
+        douyinId: identity.douyin_id,
+        avatarFile: identity.avatar_file,
+      });
+    }
+  } catch (error) {
+    console.warn('[Auth] 个人页身份识别失败:', error);
+  }
   // 1. 确保计划任务已注册
   ensureSparkSchedulerTask();
 
@@ -31,7 +48,7 @@ function _onLoginSuccess(): void {
 
 let loginStartPromise: Promise<any> | null = null;
 
-export function registerAuthHandlers(): void {
+export function registerAuthHandlers(logManager?: LogManager): void {
   // 启动网页登录（打开浏览器等待用户登录，自动保存 Cookie）
   ipcMain.handle(IPC_CHANNELS.AUTH_START_QRCODE, async () => {
     try {
@@ -43,7 +60,7 @@ export function registerAuthHandlers(): void {
       const result = await loginStartPromise;
       // 登录成功后确认计划任务
       if (result.success) {
-        _onLoginSuccess();
+        await _onLoginSuccess(logManager);
       }
       return {
         success: result.success === true,
@@ -83,7 +100,7 @@ export function registerAuthHandlers(): void {
       const result = await pythonEngine.loginImport(cookieJson);
       // 导入成功后确认计划任务
       if (result.success !== false) {
-        _onLoginSuccess();
+        await _onLoginSuccess(logManager);
       }
       return {
         success: result.success !== false,

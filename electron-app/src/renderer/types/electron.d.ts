@@ -80,6 +80,17 @@ export interface HistorySparkDaysResult {
   sendRecords?: SendRecord[];
 }
 
+export interface LocalProfile {
+  id: string;
+  name: string;
+  note: string;
+  douyinId?: string;
+  avatarFile?: string;
+  createdAt: string;
+  active: boolean;
+  hasCookie: boolean;
+}
+
 export interface ScreenshotsListResult {
   success: boolean;
   files: Array<{
@@ -144,6 +155,13 @@ export interface ElectronAPI {
   cookieDecrypt: (encryptedText: string, secret: string) => Promise<{ success: boolean; data?: string; error?: string }>;
   cookieSave: () => Promise<{ success: boolean }>;
   cookieLoad: () => Promise<{ success: boolean; data: any }>;
+
+  profilesList: () => Promise<{ success: boolean; profiles: LocalProfile[]; error?: string }>;
+  profilesCreate: (name?: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
+  profilesSwitch: (id: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
+  profilesUpdate: (id: string, name: string, note: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
+  profilesDelete: (id: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
+  profilesExport: (id: string) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
 
   // 好友管理
   friendsList: () => Promise<FriendsListResult>;

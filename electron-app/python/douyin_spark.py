@@ -1250,6 +1250,64 @@ def identify_friend(keyword):
                 pass
 
 
+def identify_self():
+    """打开个人页，识别当前账户的抖音号、头像和名称。"""
+    if not os.path.exists(COOKIE_FILE):
+        return {"success": False, "error": "Cookie 文件不存在"}
+    result = {"success": False, "name": "", "douyin_id": "", "avatar_file": ""}
+    playwright_context = None
+    browser = None
+    try:
+        with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+            cookies = normalize_cookies(json.load(f), ".douyin.com")
+        playwright_context = sync_playwright()
+        p = playwright_context.__enter__()
+        launch_kwargs = {"headless": HEADLESS}
+        if CHROMIUM_EXECUTABLE:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(viewport={"width": 1440, "height": 900}, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0.0.0 Safari/537.36")
+        context.add_cookies(cookies)
+        page = context.new_page()
+        page.goto("https://www.douyin.com/user/self", wait_until="domcontentloaded", timeout=120000)
+        time.sleep(4)
+        _dismiss_trust_dialog(page)
+        body = page.locator("body").first.inner_text()[:30000]
+        douyin_id = _extract_douyin_id_from_text(body)
+        if not douyin_id:
+            douyin_id = page.locator('[data-e2e*="user-id"], [class*="user-id"], [class*="抖音号"]').first.inner_text(timeout=2000).strip()
+            douyin_id = _extract_douyin_id_from_text("抖音号 " + douyin_id) or douyin_id
+        name = ""
+        for selector in ['h1', '[data-e2e="user-info-name"]', '[class*="user-info"] [class*="name"]']:
+            try:
+                candidate = page.locator(selector).first.inner_text(timeout=1500).strip()
+                if candidate and len(candidate) <= 80 and "抖音号" not in candidate:
+                    name = candidate
+                    break
+            except Exception:
+                pass
+        if not name:
+            name = (page.title() or "").replace(" - 抖音", "").strip()
+        avatar_src = page.locator('img[src*="douyinpic"], img[alt*="头像"], img').first.get_attribute("src")
+        avatar_file = ""
+        if avatar_src:
+            saved = _save_friend_avatar(page, {FRIEND_NAME_KEY: name or "self"}, img_src=avatar_src)
+            if saved:
+                avatar_file = os.path.basename(saved)
+        return {"success": bool(name or douyin_id), "name": name, "douyin_id": douyin_id, "avatar_file": avatar_file}
+    except LoginExpiredException:
+        return {**result, "error": "Cookie 已过期"}
+    except Exception as e:
+        return {**result, "error": str(e)}
+    finally:
+        if browser is not None:
+            try: browser.close()
+            except Exception: pass
+        if playwright_context is not None:
+            try: playwright_context.__exit__(None, None, None)
+            except Exception: pass
+
+
 def _check_login_status_playwright():
     """用 Playwright 实测 Cookie 是否有效"""
     try:

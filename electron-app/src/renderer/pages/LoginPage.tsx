@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Globe, Key, ArrowLeft, AlertCircle, CheckCircle, ExternalLink, Loader2, XCircle } from 'lucide-react';
-import type { LoginQrcodeResult, LoginPollResult } from '../types/electron';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Globe, Key, ArrowLeft, AlertCircle, CheckCircle, ExternalLink, Loader2, XCircle, UserRound, Plus, Pencil, Trash2, Download, Save } from 'lucide-react';
+import type { LocalProfile, LoginQrcodeResult, LoginPollResult } from '../types/electron';
 
 type LoginMode = 'web' | 'import';
 
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<LoginMode>('web');
   const [loginStatus, setLoginStatus] = useState<'idle' | 'loading' | 'pending' | 'success' | 'expired' | 'failed'>('idle');
   const [countdown, setCountdown] = useState(300);
@@ -16,9 +17,85 @@ const LoginPage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const loginActiveRef = useRef(false);
+  const [profiles, setProfiles] = useState<LocalProfile[]>([]);
+  const [profileName, setProfileName] = useState('');
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editProfileName, setEditProfileName] = useState('');
+  const [editProfileNote, setEditProfileNote] = useState('');
+  const switchingAccount = searchParams.get('switch') === '1';
 
   useEffect(() => {
     return () => { mountedRef.current = false; };
+  }, []);
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.profilesList();
+      if (result.success) setProfiles(result.profiles || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadProfiles(); }, [loadProfiles]);
+
+  const handleSwitchProfile = useCallback(async (id: string) => {
+    setProfileBusy(true);
+    setErrorMsg(null);
+    loginActiveRef.current = false;
+    setLoginStatus('idle');
+    const result = await window.electronAPI.profilesSwitch(id);
+    if (result.success) {
+      window.location.reload();
+      return;
+    }
+    setErrorMsg(result.error || '切换账户失败');
+    setProfileBusy(false);
+  }, []);
+
+  const handleCreateProfile = useCallback(async () => {
+    setProfileBusy(true);
+    setErrorMsg(null);
+    const result = await window.electronAPI.profilesCreate(profileName.trim());
+    if (result.success) {
+      window.location.reload();
+      return;
+    }
+    setErrorMsg(result.error || '创建账户失败');
+    setProfileBusy(false);
+  }, [profileName]);
+
+  const handleEditProfile = useCallback((profile: LocalProfile) => {
+    setEditingProfileId(profile.id);
+    setEditProfileName(profile.name);
+    setEditProfileNote(profile.note || '');
+  }, []);
+
+  const handleUpdateProfile = useCallback(async () => {
+    if (!editingProfileId) return;
+    setProfileBusy(true);
+    const result = await window.electronAPI.profilesUpdate(editingProfileId, editProfileName, editProfileNote);
+    if (result.success) {
+      setEditingProfileId(null);
+      await loadProfiles();
+    } else setErrorMsg(result.error || '更新账户失败');
+    setProfileBusy(false);
+  }, [editingProfileId, editProfileName, editProfileNote, loadProfiles]);
+
+  const handleDeleteProfile = useCallback(async (profile: LocalProfile) => {
+    if (profiles.length <= 1) { setErrorMsg('至少保留一个账户'); return; }
+    if (!window.confirm(`隐藏账户“${profile.name}”？Cookie 会被删除，好友、历史和火花数据会保留。`)) return;
+    setProfileBusy(true);
+    const result = await window.electronAPI.profilesDelete(profile.id);
+    if (result.success) window.location.reload();
+    else { setErrorMsg(result.error || '删除账户失败'); setProfileBusy(false); }
+  }, [profiles.length]);
+
+  const handleExportProfile = useCallback(async (profile: LocalProfile) => {
+    setProfileBusy(true);
+    const result = await window.electronAPI.profilesExport(profile.id);
+    if (!result.success) setErrorMsg(result.error || '导出账户失败');
+    else if (result.path) setSuccessMsg(`账户已导出：${result.path}`);
+    setProfileBusy(false);
   }, []);
 
   // 倒计时
@@ -356,9 +433,38 @@ const LoginPage: React.FC = () => {
   return (
     <div className="flex flex-col items-center justify-center h-full">
       <div
-        className="p-8 rounded-lg border border-gray-700/50 text-center max-w-lg w-full"
+        className="p-8 rounded-2xl border border-white/10 text-center max-w-lg w-full shadow-2xl"
         style={{ backgroundColor: 'var(--bg-secondary)' }}
       >
+        <div className="mb-7 rounded-2xl border border-white/10 bg-black/15 p-4 text-left">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2"><UserRound size={17} className="text-pink-300" /><span className="text-sm font-semibold text-white">账户</span></div>
+            {switchingAccount && <span className="text-xs text-pink-300">切换账户</span>}
+          </div>
+          <div className="space-y-2">
+            {profiles.map((profile) => (
+              <div key={profile.id} className="rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2.5">
+                {editingProfileId === profile.id ? (
+                  <div className="space-y-2">
+                    <input className="w-full rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-sm text-gray-200 focus:outline-none" value={editProfileName} onChange={(event) => setEditProfileName(event.target.value)} placeholder="账户名称" />
+                    <input className="w-full rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-gray-300 focus:outline-none" value={editProfileNote} onChange={(event) => setEditProfileNote(event.target.value)} placeholder="备注" />
+                    <div className="flex justify-end gap-2"><button className="flex items-center gap-1 rounded-lg bg-green-500/20 px-2 py-1 text-xs text-green-200" onClick={handleUpdateProfile} disabled={profileBusy}><Save size={13} />保存</button><button className="rounded-lg px-2 py-1 text-xs text-gray-400" onClick={() => setEditingProfileId(null)}>取消</button></div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <button disabled={profileBusy || profile.active} onClick={() => handleSwitchProfile(profile.id)} className="min-w-0 flex-1 text-left"><span className="block truncate text-sm text-gray-200">{profile.name}</span><span className="block truncate text-[11px] text-gray-500">{profile.note || (profile.douyinId ? `抖音号：${profile.douyinId}` : '') || (profile.hasCookie ? '已保存登录状态' : '待登录')}</span></button>
+                    <div className="flex shrink-0 items-center gap-1"><span className={profile.active ? 'mr-1 text-xs text-green-400' : 'mr-1 text-xs text-blue-300'}>{profile.active ? '当前' : '切换'}</span><button title="编辑" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleEditProfile(profile)} disabled={profileBusy}><Pencil size={14} /></button><button title="导出" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleExportProfile(profile)} disabled={profileBusy}><Download size={14} /></button><button title="删除" className="rounded p-1 text-gray-500 hover:text-red-300" onClick={() => handleDeleteProfile(profile)} disabled={profileBusy}><Trash2 size={14} /></button></div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <input className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-pink-400 focus:outline-none" value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="新账户名称（可选）" disabled={profileBusy} />
+            <button className="flex items-center gap-1 rounded-xl bg-pink-500/20 px-3 py-2 text-xs text-pink-100 hover:bg-pink-500/30 disabled:opacity-50" onClick={handleCreateProfile} disabled={profileBusy}><Plus size={14} />新增</button>
+          </div>
+          <p className="mt-2 text-[11px] text-gray-600">每个账户分别保存 Cookie、好友、历史和火花数据；删除只隐藏账户并清除 Cookie，重新登录同一抖音号可恢复。</p>
+        </div>
         {errorMsg && (
           <div className="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-800/50 flex items-start gap-2">
             <AlertCircle size={16} className="text-red-400 mt-0.5 shrink-0" />

@@ -36,6 +36,13 @@ const electronAPI = {
   cookieLoad: () =>
     ipcRenderer.invoke(IPC_CHANNELS.COOKIE_LOAD),
 
+  profilesList: () => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_LIST),
+  profilesCreate: (name?: string) => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_CREATE, name),
+  profilesSwitch: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_SWITCH, id),
+  profilesUpdate: (id: string, name: string, note: string) => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_UPDATE, id, name, note),
+  profilesDelete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_DELETE, id),
+  profilesExport: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROFILES_EXPORT, id),
+
   // 好友管理
   friendsList: () =>
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_LIST),

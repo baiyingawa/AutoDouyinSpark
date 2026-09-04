@@ -25,7 +25,7 @@ const defaultNavItems: SidebarNavItem[] = [
   { to: '/data', icon: History, label: '数据' },
   { to: '/settings', icon: Settings, label: '设置' },
   { to: '/status', icon: Activity, label: '状态' },
-  { to: '/login', icon: LogIn, label: '登录' },
+  { to: '/login?switch=1', icon: LogIn, label: '账户' },
 ];
 
 interface SidebarProps {

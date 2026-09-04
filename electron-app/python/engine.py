@@ -131,6 +131,23 @@ def _ensure_data_dir(data_dir: str):
     os.makedirs(data_dir, exist_ok=True)
 
 
+def _resolve_active_data_dir(data_dir: str) -> str:
+    """计划任务传入根目录时，解析到当前账户目录；显式账户目录保持不变。"""
+    root = os.path.abspath(data_dir)
+    if os.path.basename(root).lower() != 'data':
+        return root
+    active_file = os.path.join(root, '.active_profile')
+    try:
+        profile_id = open(active_file, 'r', encoding='utf-8').read().strip()
+        if profile_id and all(char.isalnum() or char in '_-' for char in profile_id):
+            profile_dir = os.path.join(root, 'users', profile_id)
+            if os.path.isdir(profile_dir):
+                return profile_dir
+    except OSError:
+        pass
+    return root
+
+
 def _get_config_path(data_dir: str) -> str:
     return os.path.join(data_dir, "spark_config.json")
 
@@ -935,6 +952,23 @@ def action_identify_user(data_dir: str, username: str, json_mode: bool = True) -
     return result
 
 
+def action_identify_self(data_dir: str, json_mode: bool = True) -> dict:
+    """从 douyin.com/user/self 识别当前账户身份。"""
+    _ensure_data_dir(data_dir)
+    spark = _import_douyin_spark()
+    if spark is None or not hasattr(spark, "identify_self"):
+        result = {"success": False, "error": "个人页识别模块不可用"}
+    else:
+        spark.SHARED_DATA_DIR = data_dir
+        spark._rebind_paths()
+        try:
+            result = spark.identify_self()
+        except Exception as e:
+            result = {"success": False, "error": str(e)}
+    _json_out(result, json_mode)
+    return result
+
+
 # ─── CLI 入口 ───────────────────────────────────────────
 
 
@@ -953,6 +987,7 @@ _ACTIONS = {
     "email-check": action_email_check,
     "email-test": action_email_test,
     "identify-user": action_identify_user,
+    "identify-self": action_identify_self,
 }
 
 
@@ -967,7 +1002,9 @@ def main():
     parser.add_argument("--user", help="用户参数（用于 identify-user 动作）")
     args = parser.parse_args()
 
-    data_dir = os.path.abspath(args.data_dir)
+    data_dir = _resolve_active_data_dir(args.data_dir)
+    # 登录辅助模块和其他动态导入模块统一写入当前账户日志目录。
+    os.environ["SHARED_DATA_DIR"] = data_dir
     json_mode = args.json
 
     action_fn = _ACTIONS[args.action]

@@ -18,6 +18,14 @@ export const IPC_CHANNELS = {
   COOKIE_SAVE: 'cookie:save',
   COOKIE_LOAD: 'cookie:load',
 
+  // 本地多账户
+  PROFILES_LIST: 'profiles:list',
+  PROFILES_CREATE: 'profiles:create',
+  PROFILES_SWITCH: 'profiles:switch',
+  PROFILES_UPDATE: 'profiles:update',
+  PROFILES_DELETE: 'profiles:delete',
+  PROFILES_EXPORT: 'profiles:export',
+
   // 好友管理
   FRIENDS_LIST: 'friends:list',
   FRIENDS_ADD: 'friends:add',

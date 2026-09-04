@@ -11,6 +11,7 @@ import { registerHistoryHandlers } from './history.ipc';
 import { registerSettingsHandlers } from './settings.ipc';
 import { getAppUpdater } from '../updater';
 import { getSharedDataDir } from '../shared-data-dir';
+import { registerProfileHandlers } from './profiles.ipc';
 
 const pythonManager = new PythonManager();
 const logManager = new LogManager();
@@ -110,9 +111,10 @@ export function registerIpcHandlers(): void {
   });
 
   // 注册模块化 Handler
-  registerAuthHandlers();
+  registerAuthHandlers(logManager);
   registerFriendsHandlers();
   registerSparkHandlers();
   registerHistoryHandlers();
   registerSettingsHandlers();
+  registerProfileHandlers(logManager);
 }

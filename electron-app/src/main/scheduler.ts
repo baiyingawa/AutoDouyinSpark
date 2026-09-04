@@ -32,7 +32,7 @@ export interface SchedulerStatus {
 export class SparkScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private pm: PythonManager;
-  private dataDir: string;
+  private dataDir: string | null;
   private lastCheckTime: string | null = null;
   private onStatusChange: ((status: SchedulerStatus) => void) | null = null;
   private notifyingWindows: Set<BrowserWindow> = new Set();
@@ -40,8 +40,12 @@ export class SparkScheduler {
 
   constructor(options: SchedulerOptions = {}) {
     this.pm = new PythonManager();
-    this.dataDir = options.dataDir || getSharedDataDir();
+    this.dataDir = options.dataDir || null;
     this.onStatusChange = options.onStatusChange || null;
+  }
+
+  private getDataDir(): string {
+    return this.dataDir || getSharedDataDir();
   }
 
   /**
@@ -50,7 +54,7 @@ export class SparkScheduler {
   private loadTimeWindows(): { enabled: boolean; windows: TimeWindowConfig[] } {
     try {
       const fs = require('fs') as typeof import('fs');
-      const configPath = path.join(this.dataDir, 'spark_config.json');
+      const configPath = path.join(this.getDataDir(), 'spark_config.json');
       if (!fs.existsSync(configPath)) {
         return { enabled: false, windows: [] };
       }
@@ -134,7 +138,7 @@ export class SparkScheduler {
    * 获取今日已发送状态
    */
   private async getTodaySentStatus(): Promise<boolean> {
-    const stateFile = path.join(this.dataDir, '.spark_state');
+    const stateFile = path.join(this.getDataDir(), '.spark_state');
     try {
       const fs = await import('fs');
       if (!fs.existsSync(stateFile)) return false;
@@ -201,11 +205,12 @@ export class SparkScheduler {
     this.checkInProgress = true;
     this.lastCheckTime = new Date().toISOString();
     let currentWindow: string | null = null;  // 外层作用域
+    const dataDir = this.getDataDir();
 
     // 先快速检查 Cookie 文件是否存在（不开浏览器）
     try {
       const fs = await import('fs');
-      const cookieFile = path.join(this.dataDir, 'cookie_export.json');
+      const cookieFile = path.join(dataDir, 'cookie_export.json');
       if (!fs.existsSync(cookieFile)) {
         this.broadcastStatus({
           running: this.isRunning(),
@@ -218,7 +223,7 @@ export class SparkScheduler {
       }
 
       // 检查缓存的登录状态（必须有且为 valid=true 才继续）
-      const loginCheckFile = path.join(this.dataDir, '.spark_login_check');
+      const loginCheckFile = path.join(dataDir, '.spark_login_check');
       if (!fs.existsSync(loginCheckFile)) {
         // 没有缓存 → 还没做过实测检查 → 跳过，等前端触发检查
         this.broadcastStatus({
@@ -295,7 +300,7 @@ export class SparkScheduler {
 
       const enginePath = this.getEngineScriptPath();
       const result = await this.pm.exec(enginePath, [
-        '--data-dir', this.dataDir,
+        '--data-dir', dataDir,
         '--action', 'send',
         '--json',
       ], { timeout: 120000 });
@@ -366,6 +371,8 @@ export class SparkScheduler {
       this.timer = null;
       console.log('[Scheduler] 调度器已停止');
     }
+    // 切换账户或退出时终止当前账户的发送进程，避免旧账户任务在切换后继续写入。
+    this.pm.kill();
   }
 
   /**

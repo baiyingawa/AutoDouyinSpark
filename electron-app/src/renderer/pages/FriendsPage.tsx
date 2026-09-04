@@ -591,6 +591,27 @@ const FriendsPage: React.FC = () => {
         </div>
       ) : viewMode === 'cards' && !isForceSendMode ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+          {users.map((friend) => (
+            <FriendCard
+              key={friend.name}
+              friend={friend}
+              onRemove={handleRemove}
+              onEdit={setEditing}
+              onIdentify={handleIdentify}
+              identifying={identifying.has(friend.name)}
+              sentToday={sentToday}
+              sparkDays={sparkDays[friend.name]}
+              avatarUrl={avatars[friend.name]}
+              selectable={false}
+              selected={false}
+              viewMode={viewMode}
+              draggable
+              dragging={draggingName === friend.name}
+              onDragStart={() => setDraggingName(friend.name)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => handleDrop(friend.name)}
+            />
+          ))}
           <form
             className="min-h-[250px] flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-pink-400/40 bg-gradient-to-b from-pink-500/10 to-blue-500/5 p-5 text-center"
             onSubmit={(event) => { event.preventDefault(); handleAdd(); }}
@@ -618,27 +639,6 @@ const FriendsPage: React.FC = () => {
               {adding ? 'Adding...' : 'Add & Identify'}
             </button>
           </form>
-          {users.map((friend) => (
-            <FriendCard
-              key={friend.name}
-              friend={friend}
-              onRemove={handleRemove}
-              onEdit={setEditing}
-              onIdentify={handleIdentify}
-              identifying={identifying.has(friend.name)}
-              sentToday={sentToday}
-              sparkDays={sparkDays[friend.name]}
-              avatarUrl={avatars[friend.name]}
-              selectable={false}
-              selected={false}
-              viewMode={viewMode}
-              draggable
-              dragging={draggingName === friend.name}
-              onDragStart={() => setDraggingName(friend.name)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => handleDrop(friend.name)}
-            />
-          ))}
         </div>
       ) : users.length === 0 ? (
         <div
