@@ -25,6 +25,7 @@ export const IPC_CHANNELS = {
   PROFILES_UPDATE: 'profiles:update',
   PROFILES_DELETE: 'profiles:delete',
   PROFILES_EXPORT: 'profiles:export',
+  PROFILES_PAUSE: 'profiles:pause',
 
   // 好友管理
   FRIENDS_LIST: 'friends:list',

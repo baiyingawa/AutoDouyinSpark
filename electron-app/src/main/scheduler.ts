@@ -10,7 +10,8 @@ import { BrowserWindow } from 'electron';
 import { PythonManager } from './python-manager';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 import path from 'path';
-import { getSharedDataDir } from './shared-data-dir';
+import { getSharedDataDir, listProfiles } from './shared-data-dir';
+import { promptRiskVerification } from './risk-verification';
 
 export interface TimeWindowConfig {
   start: number;
@@ -51,10 +52,10 @@ export class SparkScheduler {
   /**
    * 从配置文件读取时间窗口设置
    */
-  private loadTimeWindows(): { enabled: boolean; windows: TimeWindowConfig[] } {
+  private loadTimeWindows(dataDir = this.getDataDir()): { enabled: boolean; windows: TimeWindowConfig[] } {
     try {
       const fs = require('fs') as typeof import('fs');
-      const configPath = path.join(this.getDataDir(), 'spark_config.json');
+      const configPath = path.join(dataDir, 'spark_config.json');
       if (!fs.existsSync(configPath)) {
         return { enabled: false, windows: [] };
       }
@@ -114,8 +115,8 @@ export class SparkScheduler {
   /**
    * 获取当前时间窗口（北京时间）
    */
-  private getCurrentWindow(): string | null {
-    const { enabled, windows } = this.loadTimeWindows();
+  private getCurrentWindow(dataDir = this.getDataDir()): string | null {
+    const { enabled, windows } = this.loadTimeWindows(dataDir);
     if (!enabled || windows.length === 0) {
       return 'always';
     }
@@ -137,8 +138,8 @@ export class SparkScheduler {
   /**
    * 获取今日已发送状态
    */
-  private async getTodaySentStatus(): Promise<boolean> {
-    const stateFile = path.join(this.getDataDir(), '.spark_state');
+  private async getTodaySentStatus(dataDir = this.getDataDir()): Promise<boolean> {
+    const stateFile = path.join(dataDir, '.spark_state');
     try {
       const fs = await import('fs');
       if (!fs.existsSync(stateFile)) return false;
@@ -155,17 +156,17 @@ export class SparkScheduler {
   /**
    * 获取下次可执行的时间窗口描述
    */
-  private getNextWindowDescription(): string | null {
+  private getNextWindowDescription(dataDir = this.getDataDir()): string | null {
     const now = new Date();
     const utcHour = now.getUTCHours();
     const beijingHour = (utcHour + 8) % 24;
     const beijingMin = now.getUTCMinutes();
 
     // 如果目前在上次窗口内，下次就是下次窗口开始
-    const current = this.getCurrentWindow();
+    const current = this.getCurrentWindow(dataDir);
     if (current) return 'now';
 
-    const { enabled, windows } = this.loadTimeWindows();
+    const { enabled, windows } = this.loadTimeWindows(dataDir);
     if (!enabled || windows.length === 0) return '全天';
 
     // 找到下一个窗口
@@ -200,12 +201,9 @@ export class SparkScheduler {
   /**
    * 执行一次检查
    */
-  async checkAndExecute(): Promise<void> {
-    if (this.checkInProgress) return;
-    this.checkInProgress = true;
+  private async checkProfile(dataDir: string): Promise<void> {
     this.lastCheckTime = new Date().toISOString();
     let currentWindow: string | null = null;  // 外层作用域
-    const dataDir = this.getDataDir();
 
     // 先快速检查 Cookie 文件是否存在（不开浏览器）
     try {
@@ -218,7 +216,6 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'no_cookie',
         });
-        this.checkInProgress = false;
         return;
       }
 
@@ -232,7 +229,6 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'no_login_check',
         });
-        this.checkInProgress = false;
         return;
       }
 
@@ -245,7 +241,6 @@ export class SparkScheduler {
           nextAction: 'login_invalid',
         });
         this._bringToFrontAndShowLogin();
-        this.checkInProgress = false;
         return;
       }
 
@@ -261,7 +256,6 @@ export class SparkScheduler {
             nextAction: 'login_check_stale',
           });
           this._bringToFrontAndShowLogin();
-          this.checkInProgress = false;
           return;
         }
       }
@@ -270,20 +264,19 @@ export class SparkScheduler {
     }
 
     try {
-      currentWindow = this.getCurrentWindow();
+      currentWindow = this.getCurrentWindow(dataDir);
       if (!currentWindow) {
         this.broadcastStatus({
           running: this.isRunning(),
           currentWindow: null,
           lastCheck: this.lastCheckTime,
-          nextAction: this.getNextWindowDescription(),
+          nextAction: this.getNextWindowDescription(dataDir),
         });
-        this.checkInProgress = false;
         return;
       }
 
       // 在窗口内，检查今日是否已发送
-      const sentToday = await this.getTodaySentStatus();
+      const sentToday = await this.getTodaySentStatus(dataDir);
       if (sentToday) {
         this.broadcastStatus({
           running: this.isRunning(),
@@ -291,7 +284,6 @@ export class SparkScheduler {
           lastCheck: this.lastCheckTime,
           nextAction: 'today_sent',
         });
-        this.checkInProgress = false;
         return;
       }
 
@@ -299,11 +291,27 @@ export class SparkScheduler {
       console.log(`[Scheduler] 时间窗口 ${currentWindow}，开始自动发送...`);
 
       const enginePath = this.getEngineScriptPath();
-      const result = await this.pm.exec(enginePath, [
+      let result = await this.pm.exec(enginePath, [
         '--data-dir', dataDir,
         '--action', 'send',
         '--json',
       ], { timeout: 120000 });
+
+      try {
+        const parsed = JSON.parse(result.stdout || '{}');
+        if (parsed.captchaRequired === true) {
+          const verified = await promptRiskVerification(dataDir);
+          if (verified) {
+            result = await this.pm.exec(enginePath, [
+              '--data-dir', dataDir,
+              '--action', 'send',
+              '--json',
+            ], { timeout: 120000 });
+          }
+        }
+      } catch {
+        // Python 日志不影响调度器继续处理其他账户。
+      }
 
       if (result.success) {
         console.log(`[Scheduler] 自动发送成功`);
@@ -322,14 +330,26 @@ export class SparkScheduler {
       console.error(`[Scheduler] 检查异常:`, err);
     }
 
+    if (this.onStatusChange) {
+      this.onStatusChange({
+        running: this.isRunning(),
+        currentWindow,
+        lastCheck: this.lastCheckTime,
+        nextAction: this.getNextWindowDescription(dataDir),
+      });
+    }
+  }
+
+  /** 每轮遍历全部账户；账户目录、Cookie、历史和配置均独立。 */
+  async checkAndExecute(): Promise<void> {
+    if (this.checkInProgress) return;
+    this.checkInProgress = true;
     try {
-      if (this.onStatusChange) {
-        this.onStatusChange({
-          running: this.isRunning(),
-          currentWindow,
-          lastCheck: this.lastCheckTime,
-          nextAction: this.getNextWindowDescription(),
-        });
+      const profiles = listProfiles();
+      for (const profile of profiles) {
+        if (profile.paused || !profile.hasCookie) continue;
+        const profileDir = path.join(path.dirname(this.getDataDir()), profile.id);
+        await this.checkProfile(profileDir);
       }
     } finally {
       this.checkInProgress = false;

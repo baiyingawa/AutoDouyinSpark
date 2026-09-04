@@ -25,6 +25,7 @@ export interface SparkSendResult {
   failCount: number;
   failedUsers: string[];
   screenshots: string[];
+  captchaRequired?: boolean;
   message?: string;
   error?: string;
 }
@@ -86,6 +87,7 @@ export interface LocalProfile {
   note: string;
   douyinId?: string;
   avatarFile?: string;
+  paused?: boolean;
   createdAt: string;
   active: boolean;
   hasCookie: boolean;
@@ -162,6 +164,7 @@ export interface ElectronAPI {
   profilesUpdate: (id: string, name: string, note: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
   profilesDelete: (id: string) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
   profilesExport: (id: string) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+  profilesPause: (id: string, paused: boolean) => Promise<{ success: boolean; profile?: LocalProfile; error?: string }>;
 
   // 好友管理
   friendsList: () => Promise<FriendsListResult>;

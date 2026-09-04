@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Globe, Key, ArrowLeft, AlertCircle, CheckCircle, ExternalLink, Loader2, XCircle, UserRound, Plus, Pencil, Trash2, Download, Save } from 'lucide-react';
+import { Globe, Key, ArrowLeft, AlertCircle, CheckCircle, ExternalLink, Loader2, XCircle, UserRound, Plus, Pencil, Trash2, Download, Save, Pause, Play } from 'lucide-react';
 import type { LocalProfile, LoginQrcodeResult, LoginPollResult } from '../types/electron';
 
 type LoginMode = 'web' | 'import';
@@ -97,6 +97,14 @@ const LoginPage: React.FC = () => {
     else if (result.path) setSuccessMsg(`账户已导出：${result.path}`);
     setProfileBusy(false);
   }, []);
+
+  const handlePauseProfile = useCallback(async (profile: LocalProfile) => {
+    setProfileBusy(true);
+    const result = await window.electronAPI.profilesPause(profile.id, !profile.paused);
+    if (result.success) await loadProfiles();
+    else setErrorMsg(result.error || '更新账户状态失败');
+    setProfileBusy(false);
+  }, [loadProfiles]);
 
   // 倒计时
   useEffect(() => {
@@ -453,7 +461,7 @@ const LoginPage: React.FC = () => {
                 ) : (
                   <div className="flex items-center justify-between gap-2">
                     <button disabled={profileBusy || profile.active} onClick={() => handleSwitchProfile(profile.id)} className="min-w-0 flex-1 text-left"><span className="block truncate text-sm text-gray-200">{profile.name}</span><span className="block truncate text-[11px] text-gray-500">{profile.note || (profile.douyinId ? `抖音号：${profile.douyinId}` : '') || (profile.hasCookie ? '已保存登录状态' : '待登录')}</span></button>
-                    <div className="flex shrink-0 items-center gap-1"><span className={profile.active ? 'mr-1 text-xs text-green-400' : 'mr-1 text-xs text-blue-300'}>{profile.active ? '当前' : '切换'}</span><button title="编辑" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleEditProfile(profile)} disabled={profileBusy}><Pencil size={14} /></button><button title="导出" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleExportProfile(profile)} disabled={profileBusy}><Download size={14} /></button><button title="删除" className="rounded p-1 text-gray-500 hover:text-red-300" onClick={() => handleDeleteProfile(profile)} disabled={profileBusy}><Trash2 size={14} /></button></div>
+                    <div className="flex shrink-0 items-center gap-1"><span className={profile.paused ? 'mr-1 text-xs text-yellow-300' : profile.active ? 'mr-1 text-xs text-green-400' : 'mr-1 text-xs text-blue-300'}>{profile.paused ? '已暂停' : profile.active ? '当前' : '切换'}</span><button title={profile.paused ? '恢复' : '暂停'} className="rounded p-1 text-gray-500 hover:text-yellow-200" onClick={() => handlePauseProfile(profile)} disabled={profileBusy}>{profile.paused ? <Play size={14} /> : <Pause size={14} />}</button><button title="编辑" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleEditProfile(profile)} disabled={profileBusy}><Pencil size={14} /></button><button title="导出" className="rounded p-1 text-gray-500 hover:text-white" onClick={() => handleExportProfile(profile)} disabled={profileBusy}><Download size={14} /></button><button title="删除" className="rounded p-1 text-gray-500 hover:text-red-300" onClick={() => handleDeleteProfile(profile)} disabled={profileBusy}><Trash2 size={14} /></button></div>
                   </div>
                 )}
               </div>

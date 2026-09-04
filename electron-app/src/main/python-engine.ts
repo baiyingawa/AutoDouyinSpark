@@ -44,11 +44,11 @@ export class PythonEngine {
     this.config = { timeout: 120000, ...config };
   }
 
-  private async callEngine(action: string, extra: string[] = [], stdin?: string): Promise<any> {
+  private async callEngine(action: string, extra: string[] = [], stdin?: string, dataDir = getDataDir()): Promise<any> {
     const args = buildArgs(action, extra);
     const result = await this.pm.exec(
       path.resolve(getEnginePath()),
-      ['--data-dir', getDataDir(), '--action', action, '--json', ...extra],
+      ['--data-dir', dataDir, '--action', action, '--json', ...extra],
       { timeout: this.config.timeout, stdin }
     );
 
@@ -120,6 +120,10 @@ export class PythonEngine {
 
   async identifySelf(): Promise<any> {
     return this.callEngine('identify-self');
+  }
+
+  async riskVerify(dataDir?: string): Promise<any> {
+    return this.callEngine('risk-verify', [], undefined, dataDir || getDataDir());
   }
 
   async checkLogin(): Promise<any> {

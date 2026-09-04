@@ -579,6 +579,7 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
 
     result = {
         "success": success,
+        "captchaRequired": bool(getattr(spark, "RISK_VERIFICATION_REQUIRED", False)),
         "sentCount": len(sent_users),
         "failCount": len(failed_users),
         "failedUsers": failed_users,
@@ -952,6 +953,57 @@ def action_identify_user(data_dir: str, username: str, json_mode: bool = True) -
     return result
 
 
+def action_risk_verify(data_dir: str, json_mode: bool = True) -> dict:
+    """打开可见浏览器等待验证码中转页完成。"""
+    _ensure_data_dir(data_dir)
+    spark = _import_douyin_spark()
+    if spark is None or not hasattr(spark, "wait_for_risk_verification"):
+        result = {"success": False, "error": "验证码处理模块不可用"}
+    else:
+        spark.SHARED_DATA_DIR = data_dir
+        spark._rebind_paths()
+        result = spark.wait_for_risk_verification()
+    _json_out(result, json_mode)
+    return result
+
+
+def action_send_all(data_root: str, json_mode: bool = True) -> dict:
+    """计划任务入口：遍历所有未暂停、已登录账户，逐账户串行执行续火。"""
+    root = os.path.abspath(data_root)
+    profiles_dir = os.path.join(root, "users")
+    results = []
+    if not os.path.isdir(profiles_dir):
+        result = {"success": True, "accounts": [], "sentCount": 0, "failCount": 0}
+        _json_out(result, json_mode)
+        return result
+    for profile_id in sorted(os.listdir(profiles_dir)):
+        profile_dir = os.path.join(profiles_dir, profile_id)
+        if not os.path.isdir(profile_dir) or not all(c.isalnum() or c in "_-" for c in profile_id):
+            continue
+        try:
+            meta_path = os.path.join(profile_dir, "profile.json")
+            meta = json.load(open(meta_path, "r", encoding="utf-8")) if os.path.exists(meta_path) else {}
+            if meta.get("hidden") is True or meta.get("paused") is True:
+                continue
+            if not os.path.exists(_get_cookie_path(profile_dir)):
+                continue
+            login_cache = _get_login_check_path(profile_dir)
+            if not os.path.exists(login_cache) or json.load(open(login_cache, "r", encoding="utf-8")).get("valid") is not True:
+                continue
+            account_result = action_send(profile_dir, force=False, users=None, json_mode=False)
+            results.append({"profile": profile_id, **account_result})
+        except Exception as error:
+            results.append({"profile": profile_id, "success": False, "error": str(error)})
+    result = {
+        "success": all(item.get("success", False) for item in results) if results else True,
+        "accounts": results,
+        "sentCount": sum(int(item.get("sentCount", 0)) for item in results),
+        "failCount": sum(int(item.get("failCount", 0)) for item in results),
+    }
+    _json_out(result, json_mode)
+    return result
+
+
 def action_identify_self(data_dir: str, json_mode: bool = True) -> dict:
     """从 douyin.com/user/self 识别当前账户身份。"""
     _ensure_data_dir(data_dir)
@@ -975,6 +1027,8 @@ def action_identify_self(data_dir: str, json_mode: bool = True) -> dict:
 _ACTIONS = {
     "status": action_status,
     "send": action_send,
+    "send-all": action_send_all,
+    "risk-verify": action_risk_verify,
     "refresh-days": action_refresh_days,
     "login-start": action_login_start,
     "login-poll": action_login_poll,
@@ -1002,7 +1056,8 @@ def main():
     parser.add_argument("--user", help="用户参数（用于 identify-user 动作）")
     args = parser.parse_args()
 
-    data_dir = _resolve_active_data_dir(args.data_dir)
+    raw_data_dir = os.path.abspath(args.data_dir)
+    data_dir = raw_data_dir if args.action == "send-all" else _resolve_active_data_dir(raw_data_dir)
     # 登录辅助模块和其他动态导入模块统一写入当前账户日志目录。
     os.environ["SHARED_DATA_DIR"] = data_dir
     json_mode = args.json

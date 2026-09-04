@@ -12,6 +12,7 @@ export interface LocalProfile {
   douyinId?: string;
   avatarFile?: string;
   hidden?: boolean;
+  paused?: boolean;
   createdAt: string;
   active: boolean;
   hasCookie: boolean;
@@ -65,7 +66,7 @@ function ensureStorage(): void {
   fs.writeFileSync(ACTIVE_PROFILE_FILE, `${activeId}\n`, 'utf8');
 }
 
-function readProfileMeta(id: string): { name: string; note: string; createdAt: string; douyinId?: string; avatarFile?: string; hidden?: boolean } {
+function readProfileMeta(id: string): { name: string; note: string; createdAt: string; douyinId?: string; avatarFile?: string; hidden?: boolean; paused?: boolean } {
   const metaPath = path.join(PROFILES_DIR, id, 'profile.json');
   try {
     const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -75,6 +76,7 @@ function readProfileMeta(id: string): { name: string; note: string; createdAt: s
       douyinId: typeof raw.douyinId === 'string' ? raw.douyinId : undefined,
       avatarFile: typeof raw.avatarFile === 'string' ? raw.avatarFile : undefined,
       hidden: raw.hidden === true,
+      paused: raw.paused === true,
       createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
     };
   } catch {
@@ -121,6 +123,7 @@ export function listProfiles(): LocalProfile[] {
         douyinId: meta.douyinId,
         avatarFile: meta.avatarFile,
         hidden: meta.hidden,
+        paused: meta.paused,
         createdAt: meta.createdAt,
         active: id === activeId,
         hasCookie: fs.existsSync(path.join(PROFILES_DIR, id, 'cookie_export.json')),
@@ -158,6 +161,7 @@ export function updateProfile(id: string, name: string, note: string): LocalProf
   fs.writeFileSync(path.join(PROFILES_DIR, id, 'profile.json'), JSON.stringify({
     id, name: nextName, note: nextNote, createdAt: current.createdAt,
     douyinId: current.douyinId, avatarFile: current.avatarFile,
+    paused: current.paused,
   }, null, 2), 'utf8');
   return listProfiles().find((profile) => profile.id === id)!;
 }
@@ -170,6 +174,7 @@ export function updateProfileIdentity(id: string, identity: { name?: string; dou
   fs.writeFileSync(path.join(PROFILES_DIR, id, 'profile.json'), JSON.stringify({
     id, name: nextName, note: current.note || nextName, createdAt: current.createdAt,
     douyinId: identity.douyinId || current.douyinId, avatarFile: identity.avatarFile || current.avatarFile,
+    paused: current.paused,
   }, null, 2), 'utf8');
   return listProfiles().find((profile) => profile.id === id)!;
 }
@@ -189,6 +194,7 @@ export function deleteProfile(id: string): LocalProfile {
   fs.writeFileSync(path.join(profileDir, 'profile.json'), JSON.stringify({
     id, name: current.name, note: current.note, createdAt: current.createdAt,
     douyinId: current.douyinId, avatarFile: current.avatarFile, hidden: true,
+    paused: current.paused,
   }, null, 2), 'utf8');
   if (wasActive) {
     const next = listProfiles()[0];
@@ -215,10 +221,21 @@ export function restoreProfileByDouyinId(douyinId: string, name?: string, avatar
   const meta = match.meta;
   fs.writeFileSync(path.join(targetDir, 'profile.json'), JSON.stringify({
     id: match.id, name: name?.trim().slice(0, 80) || meta.name, note: meta.note || name || meta.name,
-    createdAt: meta.createdAt, douyinId, avatarFile: avatarFile || meta.avatarFile, hidden: false,
+    createdAt: meta.createdAt, douyinId, avatarFile: avatarFile || meta.avatarFile, hidden: false, paused: false,
   }, null, 2), 'utf8');
   fs.writeFileSync(ACTIVE_PROFILE_FILE, `${match.id}\n`, 'utf8');
   return listProfiles().find((profile) => profile.id === match.id) || null;
+}
+
+export function setProfilePaused(id: string, paused: boolean): LocalProfile {
+  ensureStorage();
+  if (!isValidProfileId(id) || !fs.existsSync(path.join(PROFILES_DIR, id))) throw new Error('账户不存在');
+  const current = readProfileMeta(id);
+  fs.writeFileSync(path.join(PROFILES_DIR, id, 'profile.json'), JSON.stringify({
+    id, name: current.name, note: current.note, createdAt: current.createdAt,
+    douyinId: current.douyinId, avatarFile: current.avatarFile, hidden: current.hidden === true, paused: Boolean(paused),
+  }, null, 2), 'utf8');
+  return listProfiles().find((profile) => profile.id === id)!;
 }
 
 export function getProfileDir(id: string): string {

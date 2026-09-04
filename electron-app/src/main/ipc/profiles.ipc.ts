@@ -4,7 +4,7 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
-import { createProfile, deleteProfile, getProfileDir, getSharedDataDir, listProfiles, switchProfile, updateProfile } from '../shared-data-dir';
+import { createProfile, deleteProfile, getProfileDir, getSharedDataDir, listProfiles, setProfilePaused, switchProfile, updateProfile } from '../shared-data-dir';
 import { pythonEngine } from '../python-engine';
 import { getDefaultScheduler } from '../scheduler';
 import { LogManager } from '../log-manager';
@@ -78,6 +78,14 @@ export function registerProfileHandlers(logManager: LogManager): void {
       const script = "$source=$args[0];$dest=$args[1];Compress-Archive -Path (Join-Path $source '*') -DestinationPath $dest -Force";
       await execFileAsync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script, '--', profileDir, result.filePath], { windowsHide: true });
       return { success: true, path: result.filePath };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.PROFILES_PAUSE, async (_event, id: string, paused: boolean) => {
+    try {
+      return { success: true, profile: setProfilePaused(String(id || ''), Boolean(paused)) };
     } catch (error) {
       return { success: false, error: String(error) };
     }

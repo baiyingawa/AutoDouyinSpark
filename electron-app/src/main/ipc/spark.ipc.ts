@@ -6,13 +6,18 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
 import { getDefaultScheduler } from '../scheduler';
 import { getSparkSchedulerTaskStatus } from '../task-scheduler';
+import { promptRiskVerification } from '../risk-verification';
 
 export function registerSparkHandlers(): void {
   // 发送火花
   ipcMain.handle(IPC_CHANNELS.SPARK_SEND, async (_event, force?: boolean, users?: string[]) => {
     try {
       const selectedUsers = Array.isArray(users) ? users.filter((user) => typeof user === 'string' && user.trim()) : [];
-      const result = await pythonEngine.send(!!force, selectedUsers);
+      let result = await pythonEngine.send(!!force, selectedUsers);
+      if (result.captchaRequired) {
+        const verified = await promptRiskVerification();
+        if (verified) result = await pythonEngine.send(!!force, selectedUsers);
+      }
 
       return {
         success: result.success === true,
@@ -21,6 +26,7 @@ export function registerSparkHandlers(): void {
         failedUsers: result.failedUsers || [],
         screenshots: result.screenshots || [],
         message: result.message,
+        captchaRequired: result.captchaRequired === true,
       };
     } catch (err) {
       return { success: false, sentCount: 0, failCount: 0, failedUsers: [], screenshots: [], error: String(err) };

@@ -32,6 +32,13 @@ class LoginExpiredException(Exception):
     pass
 
 
+class RiskVerificationRequired(Exception):
+    pass
+
+
+RISK_VERIFICATION_REQUIRED = False
+
+
 # 自动探测 Playwright Chromium 路径（优先使用已安装的完整版 Chrome）
 def _get_chromium_executable():
     """返回可用的 Chromium/Chrome 可执行文件路径，或 None（让 Playwright 自动下载）"""
@@ -1088,12 +1095,10 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
         )
         context.add_cookies(cookies)
         page = context.new_page()
-        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(2)
-        _dismiss_trust_dialog(page)
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         time.sleep(4)
         _dismiss_trust_dialog(page)
+        _raise_if_captcha(page)
         result = send_to_friend(page, friend, msg)
         if result.get("ok"):
             final_name = result.get("name") or name
@@ -1211,12 +1216,10 @@ def identify_friend(keyword):
         )
         context.add_cookies(cookies)
         page = context.new_page()
-        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(3)
-        _dismiss_trust_dialog(page)
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         time.sleep(5)
         _dismiss_trust_dialog(page)
+        _raise_if_captcha(page)
         if not _search_and_open(page, keyword):
             return {**result, "error": "搜索不到该好友"}
         title = _clean_chat_display_name(_get_active_chat_title(page) or keyword)
@@ -1332,7 +1335,7 @@ def _check_login_status_playwright():
             context = browser.new_context(viewport={"width": 1440, "height": 900})
             context.add_cookies(cookies)
             page = context.new_page()
-            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=30000)
             time.sleep(5)  # 等待足够时间让登录弹窗渲染
 
             # 登录状态检测（抖音通常弹窗而非跳转 URL）
@@ -1568,6 +1571,69 @@ def _dismiss_trust_dialog(page):
     except Exception:
         pass
     return False
+
+
+def _is_captcha_interstitial(page):
+    """检测风控验证码中转页，避免继续操作聊天页面。"""
+    try:
+        title = (page.title() or "").strip()
+    except Exception:
+        title = ""
+    try:
+        body = page.locator("body").first.inner_text(timeout=1000)[:3000]
+    except Exception:
+        body = ""
+    return "验证码中转页" in title or "验证码中转页" in body
+
+
+def _raise_if_captcha(page):
+    if _is_captcha_interstitial(page):
+        log("⚠️ 检测到验证码中转页，暂停本次操作，等待人工验证")
+        raise RiskVerificationRequired("检测到验证码中转页")
+
+
+def wait_for_risk_verification():
+    """打开可见抖音浏览器，直到验证码中转页消失后自动关闭。"""
+    if not os.path.exists(COOKIE_FILE):
+        return {"success": False, "error": "Cookie 文件不存在"}
+    playwright_context = None
+    browser = None
+    try:
+        with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+            cookies = normalize_cookies(json.load(f), ".douyin.com")
+        playwright_context = sync_playwright()
+        p = playwright_context.__enter__()
+        launch_kwargs = {"headless": False}
+        if CHROMIUM_EXECUTABLE:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        context.add_cookies(cookies)
+        page = context.new_page()
+        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=120000)
+        time.sleep(3)
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            if not _is_captcha_interstitial(page):
+                try:
+                    refreshed = context.cookies()
+                    if len(refreshed) >= 5:
+                        with open(COOKIE_FILE, "w", encoding="utf-8") as f:
+                            json.dump(refreshed, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return {"success": True, "verified": True}
+            time.sleep(2)
+        return {"success": False, "verified": False, "error": "验证码验证超时"}
+    except Exception as e:
+        return {"success": False, "verified": False, "error": str(e)}
+    finally:
+        if browser is not None:
+            try: browser.close()
+            except Exception: pass
+        if playwright_context is not None:
+            try: playwright_context.__exit__(None, None, None)
+            except Exception: pass
 
 
 def _clean_text(text):
@@ -1885,28 +1951,12 @@ def send_messages():
 
         # 1. 先访问主页建立 Cookie/Session，再跳转聊天页
         log("🌐 正在打开 douyin.com...")
-        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(3)
-        _dismiss_trust_dialog(page)
-
-        # === 主页登录过期检测（提前拦截，避免浪费时间）===
-        try:
-            body_text = page.locator('body').first.inner_text()[:500]
-            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
-                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
-                _invalidate_login_cache()
-                raise LoginExpiredException("Cookie 已过期")
-        except LoginExpiredException:
-            raise
-        except Exception:
-            pass
-
-        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
-
-        log("🌐 跳转到 douyin.com/chat...")
+        log("🌐 正在打开 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
+        _dismiss_trust_dialog(page)
+        _raise_if_captcha(page)
 
         # === 登录过期检测 ===
         try:
@@ -1930,6 +1980,7 @@ def send_messages():
 
         # 3. 关闭信任登录弹窗（如果存在）
         _dismiss_trust_dialog(page)
+        _raise_if_captcha(page)
         # 抓取头像
         _scrape_avatars(page)
         time.sleep(1)
@@ -2215,9 +2266,6 @@ def _update_spark_days():
             context.add_cookies(cookies)
             page = context.new_page()
 
-            page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(3)
-            _dismiss_trust_dialog(page)
             page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
             time.sleep(5)
             try:
@@ -2226,6 +2274,7 @@ def _update_spark_days():
                 pass
             time.sleep(3)
             _dismiss_trust_dialog(page)
+            _raise_if_captcha(page)
             try:
                 _scrape_spark_days(page)
             except Exception as e:
@@ -2294,30 +2343,12 @@ def _run_spark_session(force=False):
         page = context.new_page()
         log(f"✅ 浏览器就绪 ({time.time()-t0:.1f}s)")
 
-        # 先访问主页建立 Cookie/Session，再跳转聊天页
-        log("🌐 正在打开 douyin.com...")
-        page.goto("https://www.douyin.com/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(3)
-        _dismiss_trust_dialog(page)
-
-        # === 主页登录过期检测（提前拦截，避免浪费时间）===
-        try:
-            body_text = page.locator('body').first.inner_text()[:500]
-            if '登录后' in body_text or '扫码登录' in body_text or '登录过期' in body_text:
-                log("🔒 Cookie 已过期！检测到页面登录提示，请重新登录")
-                _invalidate_login_cache()
-                raise LoginExpiredException("Cookie 已过期")
-        except LoginExpiredException:
-            raise
-        except Exception:
-            pass
-
-        log(f"✅ 主页加载完成 ({time.time()-t0:.1f}s)")
-
-        log("🌐 跳转到 douyin.com/chat...")
+        log("🌐 正在打开 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
         time.sleep(5)
+        _dismiss_trust_dialog(page)
+        _raise_if_captcha(page)
 
         # === 登录过期检测 ===
         try:
@@ -2430,6 +2461,8 @@ def _run_spark_session(force=False):
 
 
 def main(force=False):
+    global RISK_VERIFICATION_REQUIRED
+    RISK_VERIFICATION_REQUIRED = False
     # === 快速检查：没有 Cookie 文件就跳过（不开浏览器） ===
     if not os.path.exists(COOKIE_FILE):
         log("⚠️ 未检测到 Cookie 文件，请先登录后再试")
@@ -2472,6 +2505,9 @@ def main(force=False):
             success = _run_spark_session_parallel(force=force)
         except LoginExpiredException:
             log("🔒 Cookie 已过期，请重新登录后再试")
+        except RiskVerificationRequired:
+            RISK_VERIFICATION_REQUIRED = True
+            log("⚠️ 检测到验证码中转页，等待人工验证")
         except Exception as e:
             log(f"❌ 火花会话异常: {e}")
 

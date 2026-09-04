@@ -142,7 +142,7 @@ function createSparkSchedulerTask(): void {
     const vbsContent = `' AutoDouyinSpark 静默运行脚本（通过 engine.py 统一数据目录）
 Dim shell
 Set shell = CreateObject("WScript.Shell")
-shell.Run "cmd /c cd /d ${escapedPath} && python ""${enginePy.replace(/'/g, "''")}"" --data-dir ""${dataDir.replace(/'/g, "''")}"" --action send --json", 0, False
+    shell.Run "cmd /c cd /d ${escapedPath} && python ""${enginePy.replace(/'/g, "''")}"" --data-dir ""${dataDir.replace(/'/g, "''")}"" --action send-all --json", 0, False
 Set shell = Nothing`;
     fs.writeFileSync(vbsPath, vbsContent, 'utf-8');
   }
