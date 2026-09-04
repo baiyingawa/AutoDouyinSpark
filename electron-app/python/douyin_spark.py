@@ -1,7 +1,6 @@
 """
 抖音自动续火花脚本
-功能：每天在指定时间段发送 "[Ai]火花火花！+日期+时间" 给指定用户列表
-时间窗口：1:00~7:00 或 17:00~19:00，每天最多发送一次
+
 """
 
 import json
@@ -113,7 +112,8 @@ def _migrate_legacy_files(src_dir, dst_dir):
 _migrate_legacy_files(SCRIPT_DIR, SHARED_DATA_DIR)
 
 _CONFIG_FILE = os.path.join(SHARED_DATA_DIR, "spark_config.json")
-TARGET_USERS = ["淋雨也走", "酸菜鱼米"]
+# 好友列表唯一来源为共享数据目录中的 spark_config.json；没有配置时不发送任何对象。
+TARGET_USERS = []
 if os.path.exists(_CONFIG_FILE):
     try:
         with open(_CONFIG_FILE, "r", encoding="utf-8") as _f:
@@ -138,6 +138,8 @@ STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
 LOG_FILE = os.path.join(SHARED_DATA_DIR, ".spark_log")
 DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
 DAYS_HISTORY = os.path.join(SHARED_DATA_DIR, ".spark_days_history")  # 按日存档，供趋势图使用
+HISTORY_BACKUP_DIR = os.path.join(SHARED_DATA_DIR, "history_backups")
+HISTORY_LOCK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_days_history.lock")
 CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
 LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
 AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
@@ -202,6 +204,93 @@ def _atomic_json_write(path, data):
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_path, path)
+
+
+def _acquire_history_lock(timeout=10):
+    """跨进程串行化历史读改写，避免多线程/多实例互相覆盖。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            fd = os.open(HISTORY_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(str(_PID))
+            return True
+        except FileExistsError:
+            try:
+                with open(HISTORY_LOCK_FILE, "r", encoding="utf-8") as stream:
+                    old_pid = int(stream.read().strip())
+                os.kill(old_pid, 0)
+            except (ValueError, PermissionError, OSError):
+                try:
+                    os.remove(HISTORY_LOCK_FILE)
+                except OSError:
+                    pass
+            time.sleep(0.05)
+        except OSError:
+            time.sleep(0.05)
+    return False
+
+
+def _release_history_lock():
+    try:
+        if os.path.exists(HISTORY_LOCK_FILE):
+            with open(HISTORY_LOCK_FILE, "r", encoding="utf-8") as stream:
+                if int(stream.read().strip()) == _PID:
+                    os.remove(HISTORY_LOCK_FILE)
+    except (ValueError, OSError):
+        pass
+
+
+def _write_days_history(days):
+    """按日合并历史，并在距离上次备份超过三天时备份旧文件。"""
+    if not isinstance(days, dict) or not days:
+        return False
+    if not _acquire_history_lock():
+        log("⚠️ 历史记录写入锁超时，跳过本次写入")
+        return False
+    try:
+        history = []
+        history_exists = os.path.exists(DAYS_HISTORY)
+        if history_exists:
+            try:
+                with open(DAYS_HISTORY, "r", encoding="utf-8") as stream:
+                    raw = json.load(stream)
+                if isinstance(raw, list):
+                    history = raw
+            except Exception:
+                # 先保留损坏原件，再用当前数据重建，避免损坏继续阻塞自动续火。
+                os.makedirs(HISTORY_BACKUP_DIR, exist_ok=True)
+                corrupt_path = os.path.join(HISTORY_BACKUP_DIR, f"spark_days_history_corrupt_{datetime.now(CHINA_TZ).strftime('%Y%m%d_%H%M%S')}.json")
+                try:
+                    import shutil
+                    shutil.copy2(DAYS_HISTORY, corrupt_path)
+                except OSError:
+                    pass
+                history = []
+
+        today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
+        found = False
+        for entry in history:
+            if isinstance(entry, dict) and entry.get("date") == today_str:
+                entry["days"] = days
+                found = True
+                break
+        if not found:
+            history.append({"date": today_str, "days": days})
+
+        if history_exists:
+            os.makedirs(HISTORY_BACKUP_DIR, exist_ok=True)
+            backups = [os.path.join(HISTORY_BACKUP_DIR, name) for name in os.listdir(HISTORY_BACKUP_DIR) if name.startswith("spark_days_history_") and name.endswith(".json")]
+            newest_backup = max((os.path.getmtime(item) for item in backups if os.path.isfile(item)), default=0)
+            if not newest_backup or time.time() - newest_backup >= 3 * 24 * 60 * 60:
+                import shutil
+                backup_path = os.path.join(HISTORY_BACKUP_DIR, f"spark_days_history_{datetime.now(CHINA_TZ).strftime('%Y%m%d_%H%M%S')}.json")
+                shutil.copy2(DAYS_HISTORY, backup_path)
+
+        _atomic_json_write(DAYS_HISTORY, history)
+        return True
+    finally:
+        _release_history_lock()
 
 
 # ==== 好友数据模型（备注名 / 抖音号 / 头像 三级匹配）====
@@ -285,7 +374,7 @@ def reload_friends():
 def _rebind_paths():
     """根据 SHARED_DATA_DIR 重新计算全部数据文件路径（engine.py 注入数据目录时调用）。"""
     global _CONFIG_FILE, COOKIE_FILE, STATE_FILE, STREAK_FILE, LOG_FILE
-    global DAYS_CACHE, DAYS_HISTORY, CONFIRM_FILE, LOGIN_CHECK_FILE
+    global DAYS_CACHE, DAYS_HISTORY, HISTORY_BACKUP_DIR, HISTORY_LOCK_FILE, CONFIRM_FILE, LOGIN_CHECK_FILE
     global AVATARS_FILE, LOCK_FILE, AVATAR_DIR
     _CONFIG_FILE = os.path.join(SHARED_DATA_DIR, "spark_config.json")
     COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
@@ -294,6 +383,8 @@ def _rebind_paths():
     LOG_FILE = os.path.join(SHARED_DATA_DIR, ".spark_log")
     DAYS_CACHE = os.path.join(SHARED_DATA_DIR, ".spark_days_cache")
     DAYS_HISTORY = os.path.join(SHARED_DATA_DIR, ".spark_days_history")
+    HISTORY_BACKUP_DIR = os.path.join(SHARED_DATA_DIR, "history_backups")
+    HISTORY_LOCK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_days_history.lock")
     CONFIRM_FILE = os.path.join(SHARED_DATA_DIR, ".spark_confirm")
     LOGIN_CHECK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_login_check")
     AVATARS_FILE = os.path.join(SHARED_DATA_DIR, ".spark_avatars")
@@ -1093,25 +1184,7 @@ def _record_days_history_from_cache():
         days = cache.get("days", {}) if isinstance(cache, dict) else {}
         if not isinstance(days, dict) or not days:
             return
-        today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-        history = []
-        if os.path.exists(DAYS_HISTORY):
-            try:
-                with open(DAYS_HISTORY, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-                if isinstance(raw, list):
-                    history = raw
-            except Exception:
-                history = []
-        found = False
-        for entry in history:
-            if isinstance(entry, dict) and entry.get("date") == today_str:
-                entry["days"] = days
-                found = True
-                break
-        if not found:
-            history.append({"date": today_str, "days": days})
-        _atomic_json_write(DAYS_HISTORY, history)
+        _write_days_history(days)
     except Exception as e:
         log(f"⚠️ 从缓存补写历史记录失败: {e}")
 
@@ -1907,23 +1980,8 @@ def _scrape_spark_days(page, expand_list=True):
         _atomic_json_write(DAYS_CACHE, cache_data)
         log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
 
-        # 追加到历史记录文件（按日归档，供趋势图使用）
         try:
-            today_str = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-            history = []
-            if os.path.exists(DAYS_HISTORY):
-                with open(DAYS_HISTORY, "r", encoding="utf-8") as f:
-                    history = json.load(f)
-            # 同一天覆盖，避免重复记录
-            found = False
-            for entry in history:
-                if entry.get("date") == today_str:
-                    entry["days"] = result
-                    found = True
-                    break
-            if not found:
-                history.append({"date": today_str, "days": result})
-            _atomic_json_write(DAYS_HISTORY, history)
+            _write_days_history(result)
         except Exception as ex:
             log(f"⚠️ 写入历史记录失败: {ex}")
 

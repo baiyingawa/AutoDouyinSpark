@@ -40,8 +40,8 @@ const StatusPage: React.FC = () => {
 
   const task = data?.task;
   return (
-    <div className="w-full space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="w-full max-w-6xl space-y-6">
+      <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] p-5">
         <div className="flex items-center gap-3">
           <Activity size={24} style={{ color: 'var(--accent)' }} />
           <h1 className="text-2xl font-bold text-white">运行状态</h1>
@@ -51,21 +51,21 @@ const StatusPage: React.FC = () => {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <section className="p-6 rounded-lg border border-gray-700/50" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <section className="surface-card p-6 rounded-2xl">
           <div className="flex items-center gap-2 mb-5">
             <Activity size={18} style={{ color: 'var(--accent)' }} />
             <h2 className="text-lg font-semibold text-white">应用调度器</h2>
           </div>
           <div className="space-y-4 text-sm">
             <div className="flex justify-between"><span className="text-gray-400">进程状态</span><span className={data?.running ? 'text-green-400' : 'text-gray-500'}>{data?.running ? '运行中' : '已停止'}</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">当前时间窗口</span><span className="text-white">{format(data?.currentWindow || null)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-400">当前限制发送时间</span><span className="text-white">{format(data?.currentWindow || null)}</span></div>
             <div className="flex justify-between"><span className="text-gray-400">上次检查</span><span className="text-white">{format(data?.lastCheck || null)}</span></div>
             <div className="flex justify-between"><span className="text-gray-400">下一步</span><span className="text-white">{format(data?.nextAction || null)}</span></div>
           </div>
         </section>
 
-        <section className="p-6 rounded-lg border border-gray-700/50" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <section className="surface-card p-6 rounded-2xl">
           <div className="flex items-center gap-2 mb-5">
             <CalendarClock size={18} style={{ color: '#60a5fa' }} />
             <h2 className="text-lg font-semibold text-white">Windows 计划程序</h2>

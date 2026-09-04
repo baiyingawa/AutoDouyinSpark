@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Users, Trash2, AlertCircle, UserPlus, Send, X, CheckSquare, Square,
-  Loader2, Pencil, ScanSearch, AtSign,
+  Loader2, Pencil, ScanSearch, AtSign, LayoutGrid, List, GripVertical, RefreshCw,
 } from 'lucide-react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
@@ -18,29 +18,48 @@ interface FriendCardProps {
   onIdentify: (friend: Friend) => void;
   identifying: boolean;
   sentToday: boolean;
+  sparkDays?: number;
   avatarUrl?: string;
   selectable?: boolean;
   selected?: boolean;
   onToggle?: () => void;
+  viewMode?: 'list' | 'cards';
+  draggable?: boolean;
+  dragging?: boolean;
+  onDragStart?: () => void;
+  onDragOver?: (event: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: () => void;
 }
 
 const FriendCard: React.FC<FriendCardProps> = ({
   friend, onRemove, onEdit, onIdentify, identifying,
-  sentToday, avatarUrl, selectable = false, selected = false, onToggle,
+  sentToday, sparkDays, avatarUrl, selectable = false, selected = false, onToggle,
+  viewMode = 'list', draggable = false, dragging = false, onDragStart, onDragOver, onDrop,
 }) => {
   const [showConfirm, setShowConfirm] = useState(false);
 
   return (
     <div
-      className={'flex items-center justify-between p-4 rounded-lg border transition-colors ' +
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={'relative ' + (viewMode === 'cards'
+        ? 'min-h-[250px] flex flex-col p-5 rounded-2xl '
+        : 'flex items-center justify-between p-4 rounded-xl ') +
+        'border transition-all ' +
         (selectable && selected
           ? 'border-blue-500/60'
           : 'border-gray-700/50 hover:border-gray-600') +
-        (selectable ? ' cursor-pointer' : '')}
-      style={{ backgroundColor: 'var(--bg-secondary)' }}
+        (selectable ? ' cursor-pointer' : '') +
+        (dragging ? ' opacity-50 scale-[0.98]' : '')}
+      style={{ background: viewMode === 'cards' ? 'linear-gradient(160deg, rgba(30,41,80,0.92), rgba(22,33,62,0.78))' : 'var(--bg-secondary)' }}
       onClick={selectable ? onToggle : undefined}
     >
-      <div className="flex items-center gap-3 min-w-0">
+      <div className={viewMode === 'cards' ? 'flex flex-col items-center text-center gap-3' : 'flex items-center gap-3 min-w-0'}>
+        {draggable && !selectable && viewMode === 'cards' && (
+          <GripVertical size={18} className="absolute right-4 top-4 text-gray-600 cursor-grab" />
+        )}
         {selectable && (
           <div className="shrink-0">
             {selected ? (
@@ -55,20 +74,20 @@ const FriendCard: React.FC<FriendCardProps> = ({
           <img
             src={avatarUrl}
             alt={friend.name}
-            className="w-10 h-10 rounded-full object-cover shrink-0"
+            className={viewMode === 'cards' ? 'w-24 h-24 rounded-3xl object-cover shrink-0 ring-4 ring-white/5' : 'w-10 h-10 rounded-full object-cover shrink-0'}
           />
         ) : (
           <div
-            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
+            className={viewMode === 'cards' ? 'w-24 h-24 rounded-3xl flex items-center justify-center text-white font-bold text-3xl shrink-0 ring-4 ring-white/5' : 'w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0'}
             style={{ backgroundColor: 'var(--accent)' }}
           >
             {friend.name.charAt(0)}
           </div>
         )}
 
-        <div className="min-w-0">
-          <p className="text-white font-medium truncate">{friend.name}</p>
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className={viewMode === 'cards' ? 'min-w-0 w-full' : 'min-w-0'}>
+          <p className="text-white font-semibold truncate text-base">{friend.name}</p>
+          <div className={viewMode === 'cards' ? 'mt-2 flex flex-col items-center gap-1' : 'flex items-center gap-2 flex-wrap'}>
             <p className={'text-xs ' + (sentToday ? 'text-green-500' : 'text-gray-500')}>
               {sentToday ? '已发送' : '等待发送'}
             </p>
@@ -80,14 +99,36 @@ const FriendCard: React.FC<FriendCardProps> = ({
             ) : (
               <span className="text-xs text-yellow-500">未识别抖音号</span>
             )}
+            {viewMode === 'cards' && (
+              <span className="flex items-center gap-1 text-xs text-orange-300">
+                <span>🔥</span>{sparkDays ?? 0} 天
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       {!selectable && (
-        <div className="flex items-center gap-1 shrink-0">
+        <div className={viewMode === 'cards' ? 'mt-auto pt-5 flex items-center justify-center gap-2' : 'flex items-center gap-1 shrink-0'}>
+          {viewMode === 'cards' && (
+            <>
+              <button
+                className="px-3 py-1.5 rounded-lg text-xs text-gray-200 bg-white/5 hover:bg-white/10 transition-colors flex items-center gap-1.5"
+                onClick={(e) => { e.stopPropagation(); onEdit(friend); }}
+              >
+                <Pencil size={13} /> Edit
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-lg text-xs text-blue-200 bg-blue-500/10 hover:bg-blue-500/20 transition-colors flex items-center gap-1.5"
+                onClick={(e) => { e.stopPropagation(); onIdentify(friend); }}
+                disabled={identifying}
+              >
+                {identifying ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Update
+              </button>
+            </>
+          )}
           <button
-            className="p-2 text-gray-500 hover:text-blue-400 transition-colors"
+            className={viewMode === 'cards' ? 'hidden' : 'p-2 text-gray-500 hover:text-blue-400 transition-colors'}
             title="识别抖音号与头像"
             onClick={(e) => { e.stopPropagation(); onIdentify(friend); }}
             disabled={identifying}
@@ -95,11 +136,11 @@ const FriendCard: React.FC<FriendCardProps> = ({
             {identifying ? (
               <Loader2 size={18} className="animate-spin" />
             ) : (
-              <ScanSearch size={18} />
+              <ScanSearch size={viewMode === 'cards' ? 16 : 18} />
             )}
           </button>
           <button
-            className="p-2 text-gray-500 hover:text-white transition-colors"
+            className={viewMode === 'cards' ? 'hidden' : 'p-2 text-gray-500 hover:text-white transition-colors'}
             title="编辑名字 / 抖音号"
             onClick={(e) => { e.stopPropagation(); onEdit(friend); }}
           >
@@ -216,12 +257,25 @@ const FriendsPage: React.FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sentToday, setSentToday] = useState(false);
+  const [sparkDays, setSparkDays] = useState<Record<string, number>>({});
   const [avatars, setAvatars] = useState<Record<string, string>>({});
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
   const [identifying, setIdentifying] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Friend | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'cards'>(() => {
+    try {
+      return localStorage.getItem('friends-view-mode') === 'list' ? 'list' : 'cards';
+    } catch {
+      return 'cards';
+    }
+  });
+  const [draggingName, setDraggingName] = useState<string | null>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('friends-view-mode', viewMode); } catch {}
+  }, [viewMode]);
 
   const loadFriends = useCallback(async () => {
     setLoading(true);
@@ -246,6 +300,7 @@ const FriendsPage: React.FC = () => {
     try {
       const result = await window.electronAPI.sparkStatus();
       setSentToday(result.sentToday === true);
+      setSparkDays(result.days || {});
       setAvatars(result.avatars || {});
     } catch {}
   }, []);
@@ -372,6 +427,26 @@ const FriendsPage: React.FC = () => {
     setSavingEdit(false);
   }, [loadFriends]);
 
+  const handleDrop = useCallback(async (targetName: string) => {
+    if (!draggingName || draggingName === targetName) {
+      setDraggingName(null);
+      return;
+    }
+    const next = [...users];
+    const from = next.findIndex((friend) => friend.name === draggingName);
+    const to = next.findIndex((friend) => friend.name === targetName);
+    if (from < 0 || to < 0) return;
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setUsers(next);
+    setDraggingName(null);
+    const result = await window.electronAPI.friendsReorder(next.map((friend) => friend.name));
+    if (!result.success) {
+      setError(result.error || '保存排序失败');
+      await loadFriends();
+    }
+  }, [draggingName, users, loadFriends]);
+
   const handleToggle = useCallback((name: string) => {
     setSelectedUsers((prev) => {
       const next = new Set(prev);
@@ -434,14 +509,18 @@ const FriendsPage: React.FC = () => {
           <Users size={24} style={{ color: 'var(--accent)' }} />
           <h1 className="text-2xl font-bold text-white">好友管理</h1>
           {!loading && (
-            <span className="text-sm text-gray-500 ml-auto">
-              {users.length} 个好友
-            </span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-sm text-gray-500">{users.length} 个好友</span>
+              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/10 p-1">
+                <button className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white'}`} onClick={() => setViewMode('list')} title="列表视图"><List size={16} /></button>
+                <button className={`p-2 rounded-lg transition-colors ${viewMode === 'cards' ? 'bg-pink-500/20 text-pink-200' : 'text-gray-500 hover:text-white'}`} onClick={() => setViewMode('cards')} title="卡片视图"><LayoutGrid size={16} /></button>
+              </div>
+            </div>
           )}
         </div>
       )}
 
-      {!isForceSendMode && (
+      {!isForceSendMode && viewMode === 'list' && (
         <div
           className="p-4 rounded-lg border border-gray-700/50"
           style={{ backgroundColor: 'var(--bg-secondary)' }}
@@ -510,6 +589,57 @@ const FriendsPage: React.FC = () => {
         <div className="text-center py-12">
           <p className="text-gray-500">加载中...</p>
         </div>
+      ) : viewMode === 'cards' && !isForceSendMode ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
+          <form
+            className="min-h-[250px] flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-pink-400/40 bg-gradient-to-b from-pink-500/10 to-blue-500/5 p-5 text-center"
+            onSubmit={(event) => { event.preventDefault(); handleAdd(); }}
+          >
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-pink-300/30 bg-pink-500/15 text-pink-200">
+              <UserPlus size={28} />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-white">+ 添加</p>
+              <p className="mt-1 text-xs text-gray-500">添加后自动识别抖音号与头像</p>
+            </div>
+            <input
+              type="text"
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-center text-sm text-gray-200 placeholder-gray-600 focus:border-pink-400 focus:outline-none"
+              placeholder="备注名 / 昵称"
+              value={newUsername}
+              onChange={(event) => setNewUsername(event.target.value)}
+              disabled={adding}
+            />
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-pink-500/20 px-3 py-2 text-sm font-medium text-pink-100 transition-colors hover:bg-pink-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={adding || !newUsername.trim()}
+            >
+              {adding ? 'Adding...' : 'Add & Identify'}
+            </button>
+          </form>
+          {users.map((friend) => (
+            <FriendCard
+              key={friend.name}
+              friend={friend}
+              onRemove={handleRemove}
+              onEdit={setEditing}
+              onIdentify={handleIdentify}
+              identifying={identifying.has(friend.name)}
+              sentToday={sentToday}
+              sparkDays={sparkDays[friend.name]}
+              avatarUrl={avatars[friend.name]}
+              selectable={false}
+              selected={false}
+              viewMode={viewMode}
+              draggable
+              dragging={draggingName === friend.name}
+              onDragStart={() => setDraggingName(friend.name)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => handleDrop(friend.name)}
+            />
+          ))}
+        </div>
       ) : users.length === 0 ? (
         <div
           className="p-12 rounded-lg border border-gray-700/50 text-center"
@@ -520,7 +650,7 @@ const FriendsPage: React.FC = () => {
           <p className="text-gray-500 text-sm">在上方输入好友昵称开始添加</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className={viewMode === 'cards' ? 'grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4' : 'space-y-3'}>
           {users.map((friend) => (
             <FriendCard
               key={friend.name}
@@ -530,10 +660,17 @@ const FriendsPage: React.FC = () => {
               onIdentify={handleIdentify}
               identifying={identifying.has(friend.name)}
               sentToday={sentToday}
+              sparkDays={sparkDays[friend.name]}
               avatarUrl={avatars[friend.name]}
               selectable={isForceSendMode}
               selected={selectedUsers.has(friend.name)}
               onToggle={() => handleToggle(friend.name)}
+              viewMode={viewMode}
+              draggable={!isForceSendMode}
+              dragging={draggingName === friend.name}
+              onDragStart={() => setDraggingName(friend.name)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => handleDrop(friend.name)}
             />
           ))}
         </div>

@@ -150,6 +150,7 @@ export interface ElectronAPI {
   friendsAdd: (username: string) => Promise<{ success: boolean; error?: string }>;
   friendsRemove: (username: string) => Promise<{ success: boolean; error?: string }>;
   friendsUpdate: (payload: { name: string; newName?: string; douyin_id?: string }) => Promise<{ success: boolean; error?: string }>;
+  friendsReorder: (names: string[]) => Promise<{ success: boolean; error?: string }>;
   friendsIdentify: (username: string) => Promise<FriendsIdentifyResult>;
 
   // 续火花

@@ -45,6 +45,8 @@ const electronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_REMOVE, username),
   friendsUpdate: (payload: { name: string; newName?: string; douyin_id?: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_UPDATE, payload),
+  friendsReorder: (names: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_REORDER, names),
   friendsIdentify: (username: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.FRIENDS_IDENTIFY, username),
 

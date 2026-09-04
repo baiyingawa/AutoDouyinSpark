@@ -60,14 +60,14 @@ const SettingsPage: React.FC = () => {
   ];
 
   return (
-    <div className="w-full space-y-6">
-      <div className="flex items-center gap-3 mb-8">
+    <div className="w-full max-w-5xl space-y-6">
+      <div className="flex items-center gap-3 mb-8 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
         <Settings size={24} style={{ color: 'var(--accent)' }} />
         <h1 className="text-2xl font-bold text-white">设置</h1>
       </div>
 
       {/* Tab 切换 */}
-      <div className="flex gap-1 p-1 rounded-lg border border-gray-700/50 inline-flex"
+      <div className="flex gap-1 p-1 rounded-xl border border-gray-700/50 inline-flex"
         style={{ backgroundColor: 'var(--bg-secondary)' }}>
         {tabs.map((tab) => (
           <button
@@ -88,8 +88,7 @@ const SettingsPage: React.FC = () => {
 
       {/* 内容 */}
       <div
-        className="p-6 rounded-lg border border-gray-700/50"
-        style={{ backgroundColor: 'var(--bg-secondary)' }}
+        className="surface-card p-6 rounded-2xl"
       >
         {loading ? (
           <div className="text-center py-8">

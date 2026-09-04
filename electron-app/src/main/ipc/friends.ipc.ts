@@ -117,14 +117,16 @@ export function registerFriendsHandlers(): void {
       if (!username || !username.trim()) {
         return { success: false, error: '用户名不能为空' };
       }
-      const friends = listFriends();
-      const name = username.trim();
-      if (findFriend(friends, name)) {
-        return { success: false, error: '该好友已存在' };
-      }
-      friends.push({ name });
-      const ok = saveFriends(friends);
-      return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+      return await enqueueFriendConfigWrite(() => {
+        const friends = listFriends();
+        const name = username.trim();
+        if (findFriend(friends, name)) {
+          return { success: false, error: '该好友已存在' };
+        }
+        friends.push({ name });
+        const ok = saveFriends(friends);
+        return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+      });
     } catch (err) {
       return { success: false, error: String(err) };
     }
@@ -133,14 +135,16 @@ export function registerFriendsHandlers(): void {
   // 删除好友
   ipcMain.handle(IPC_CHANNELS.FRIENDS_REMOVE, async (_event, username: string) => {
     try {
-      const friends = listFriends();
-      const idx = friends.findIndex((f) => f.name === username);
-      if (idx === -1) {
-        return { success: false, error: '好友不存在' };
-      }
-      friends.splice(idx, 1);
-      const ok = saveFriends(friends);
-      return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+      return await enqueueFriendConfigWrite(() => {
+        const friends = listFriends();
+        const idx = friends.findIndex((f) => f.name === username);
+        if (idx === -1) {
+          return { success: false, error: '好友不存在' };
+        }
+        friends.splice(idx, 1);
+        const ok = saveFriends(friends);
+        return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+      });
     } catch (err) {
       return { success: false, error: String(err) };
     }
@@ -160,27 +164,48 @@ export function registerFriendsHandlers(): void {
         if (!newName && !douyinId) {
           return { success: false, error: '没有需要更新的内容' };
         }
-        const friends = listFriends();
-        const friend = findFriend(friends, name);
-        if (!friend) {
-          return { success: false, error: '好友不存在' };
-        }
-        if (newName && newName !== name) {
-          if (findFriend(friends, newName)) {
-            return { success: false, error: '新名字已被其他好友使用' };
+        return await enqueueFriendConfigWrite(() => {
+          const friends = listFriends();
+          const friend = findFriend(friends, name);
+          if (!friend) {
+            return { success: false, error: '好友不存在' };
           }
-          friend.name = newName;
-        }
-        if (douyinId) {
-          friend.douyin_id = douyinId;
-        }
-        const ok = saveFriends(friends);
-        return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+          if (newName && newName !== name) {
+            if (findFriend(friends, newName)) {
+              return { success: false, error: '新名字已被其他好友使用' };
+            }
+            friend.name = newName;
+          }
+          if (douyinId) {
+            friend.douyin_id = douyinId;
+          }
+          const ok = saveFriends(friends);
+          return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+        });
       } catch (err) {
         return { success: false, error: String(err) };
       }
     },
   );
+
+  // 拖动好友卡片后保存顺序，未知名称会被忽略，避免覆盖新加入的好友。
+  ipcMain.handle(IPC_CHANNELS.FRIENDS_REORDER, async (_event, names: string[]) => {
+    try {
+      return await enqueueFriendConfigWrite(() => {
+        const friends = listFriends();
+        const requested = Array.isArray(names) ? names.filter((name) => typeof name === 'string') : [];
+        const byName = new Map(friends.map((friend) => [friend.name, friend]));
+        const ordered = requested.map((name) => byName.get(name)).filter((friend): friend is FriendRecord => Boolean(friend));
+        for (const friend of friends) {
+          if (!ordered.includes(friend)) ordered.push(friend);
+        }
+        const ok = saveFriends(ordered);
+        return { success: ok, error: ok ? undefined : '写入配置文件失败' };
+      });
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
 
   // 识别好友抖音号与头像（调用 Python 引擎，成功后自动写回配置）
   ipcMain.handle(IPC_CHANNELS.FRIENDS_IDENTIFY, async (_event, username: string) => {

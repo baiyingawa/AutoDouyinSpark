@@ -169,29 +169,67 @@ def _atomic_json_write(path: str, data):
     os.replace(temp_path, path)
 
 
+def _acquire_json_lock(lock_path: str, timeout: float = 10) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(str(os.getpid()))
+            return True
+        except FileExistsError:
+            try:
+                with open(lock_path, "r", encoding="utf-8") as stream:
+                    old_pid = int(stream.read().strip())
+                os.kill(old_pid, 0)
+            except (ValueError, PermissionError, OSError):
+                try:
+                    os.remove(lock_path)
+                except OSError:
+                    pass
+            time.sleep(0.05)
+        except OSError:
+            time.sleep(0.05)
+    return False
+
+
+def _release_json_lock(lock_path: str):
+    try:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except OSError:
+        pass
+
+
 def _append_send_history(data_dir: str, users: list[str], force: bool, success: bool):
     """记录本次实际发送成功的好友，供首页和历史页展示。"""
     if not users:
         return
     history_path = _get_send_history_path(data_dir)
-    history = []
+    lock_path = f"{history_path}.lock"
+    if not _acquire_json_lock(lock_path):
+        raise TimeoutError("发送记录写入锁超时")
     try:
-        if os.path.exists(history_path):
-            with open(history_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            if isinstance(raw, list):
-                history = raw
-    except Exception:
         history = []
-    now = datetime.now(CHINA_TZ)
-    history.append({
-        "timestamp": now.isoformat(),
-        "date": now.strftime("%Y-%m-%d"),
-        "users": list(dict.fromkeys(users)),
-        "force": bool(force),
-        "success": bool(success),
-    })
-    _atomic_json_write(history_path, history[-500:])
+        try:
+            if os.path.exists(history_path):
+                with open(history_path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, list):
+                    history = raw
+        except Exception:
+            history = []
+        now = datetime.now(CHINA_TZ)
+        history.append({
+            "timestamp": now.isoformat(),
+            "date": now.strftime("%Y-%m-%d"),
+            "users": list(dict.fromkeys(users)),
+            "force": bool(force),
+            "success": bool(success),
+        })
+        _atomic_json_write(history_path, history[-500:])
+    finally:
+        _release_json_lock(lock_path)
 
 
 def _get_login_check_path(data_dir: str) -> str:
@@ -381,6 +419,10 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
         spark.DAYS_CACHE = _get_days_cache_path(data_dir)
     if hasattr(spark, 'DAYS_HISTORY'):
         spark.DAYS_HISTORY = _get_days_history_path(data_dir)
+    if hasattr(spark, 'HISTORY_BACKUP_DIR'):
+        spark.HISTORY_BACKUP_DIR = os.path.join(data_dir, 'history_backups')
+    if hasattr(spark, 'HISTORY_LOCK_FILE'):
+        spark.HISTORY_LOCK_FILE = os.path.join(data_dir, '.spark_days_history.lock')
     if hasattr(spark, 'LOGIN_CHECK_FILE'):
         spark.LOGIN_CHECK_FILE = _get_login_check_path(data_dir)
     if hasattr(spark, 'AVATARS_FILE'):
@@ -544,6 +586,12 @@ def action_refresh_days(data_dir: str, force: bool = False, json_mode: bool = Tr
         spark.COOKIE_FILE = _get_cookie_path(data_dir)
     if hasattr(spark, 'DAYS_CACHE'):
         spark.DAYS_CACHE = _get_days_cache_path(data_dir)
+    if hasattr(spark, 'DAYS_HISTORY'):
+        spark.DAYS_HISTORY = _get_days_history_path(data_dir)
+    if hasattr(spark, 'HISTORY_BACKUP_DIR'):
+        spark.HISTORY_BACKUP_DIR = os.path.join(data_dir, 'history_backups')
+    if hasattr(spark, 'HISTORY_LOCK_FILE'):
+        spark.HISTORY_LOCK_FILE = os.path.join(data_dir, '.spark_days_history.lock')
     if hasattr(spark, 'LOG_FILE'):
         spark.LOG_FILE = os.path.join(data_dir, ".spark_log")
     if hasattr(spark, 'AVATARS_FILE'):

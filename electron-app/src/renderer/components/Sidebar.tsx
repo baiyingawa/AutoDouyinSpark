@@ -22,7 +22,7 @@ export interface SidebarNavItem {
 const defaultNavItems: SidebarNavItem[] = [
   { to: '/', icon: Home, label: '首页' },
   { to: '/friends', icon: Users, label: '好友' },
-  { to: '/history', icon: History, label: '历史' },
+  { to: '/data', icon: History, label: '数据' },
   { to: '/settings', icon: Settings, label: '设置' },
   { to: '/status', icon: Activity, label: '状态' },
   { to: '/login', icon: LogIn, label: '登录' },

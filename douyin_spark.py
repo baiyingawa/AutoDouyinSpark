@@ -111,7 +111,8 @@ def _migrate_legacy_files(src_dir, dst_dir):
 _migrate_legacy_files(SCRIPT_DIR, SHARED_DATA_DIR)
 
 _CONFIG_FILE = os.path.join(SHARED_DATA_DIR, "spark_config.json")
-TARGET_USERS = ["淋雨也走", "酸菜鱼米"]
+# 好友列表唯一来源为共享数据目录中的 spark_config.json；没有配置时不发送任何对象。
+TARGET_USERS = []
 if os.path.exists(_CONFIG_FILE):
     try:
         with open(_CONFIG_FILE, "r", encoding="utf-8") as _f:

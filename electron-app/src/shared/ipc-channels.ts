@@ -23,6 +23,7 @@ export const IPC_CHANNELS = {
   FRIENDS_ADD: 'friends:add',
   FRIENDS_REMOVE: 'friends:remove',
   FRIENDS_UPDATE: 'friends:update',
+  FRIENDS_REORDER: 'friends:reorder',
   FRIENDS_IDENTIFY: 'friends:identify',
 
   // 续火花

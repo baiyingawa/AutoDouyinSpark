@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { HashRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import TitleBar from './components/TitleBar';
 import StatusBar from './components/StatusBar';
@@ -9,7 +9,7 @@ import AutoStartPrompt from './components/AutoStartPrompt';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
 import FriendsPage from './pages/FriendsPage';
-import HistoryPage from './pages/HistoryPage';
+import DataPage from './pages/HistoryPage';
 import SettingsPage from './pages/SettingsPage';
 import StatusPage from './pages/StatusPage';
 
@@ -49,13 +49,14 @@ const App: React.FC = () => {
                 }
               />
               <Route
-                path="/history"
+                path="/data"
                 element={
                   <ProtectedRoute>
-                    <HistoryPage />
+                    <DataPage />
                   </ProtectedRoute>
                 }
               />
+              <Route path="/history" element={<Navigate to="/data" replace />} />
               <Route
                 path="/settings"
                 element={

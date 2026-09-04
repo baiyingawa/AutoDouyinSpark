@@ -247,10 +247,10 @@ const DashboardPage: React.FC = () => {
           )}
 
           {/* 2x2 网格布局 */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 items-start gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-stretch gap-5">
             {/* 左上：今日状态 */}
             <div
-              className="relative overflow-hidden p-6 rounded-2xl border border-pink-400/20 shadow-xl shadow-black/10"
+              className="relative h-full min-h-[420px] overflow-hidden p-6 rounded-2xl border border-pink-400/20 shadow-xl shadow-black/10"
               style={{
                 background: 'linear-gradient(135deg, rgba(233,69,96,0.20), var(--bg-secondary) 48%, rgba(22,33,62,0.96))',
               }}
@@ -319,7 +319,7 @@ const DashboardPage: React.FC = () => {
             {/* 右上：火花天数 */}
             {status?.days && Object.keys(status.days).length > 0 && (
               <div
-                className="p-6 rounded-2xl border border-blue-300/10 shadow-xl shadow-black/10"
+                className="flex h-full min-h-[420px] flex-col p-6 rounded-2xl border border-blue-300/10 shadow-xl shadow-black/10"
                 style={{ background: 'linear-gradient(135deg, rgba(96,165,250,0.10), var(--bg-secondary) 55%)' }}
               >
                 <div className="flex items-end justify-between mb-4">
@@ -329,7 +329,7 @@ const DashboardPage: React.FC = () => {
                   </div>
                   <Flame size={24} className="text-orange-400" />
                 </div>
-                <div className="space-y-3">
+                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                   {Object.entries(status.days).map(([username, days]) => (
                     <div
                       key={username}

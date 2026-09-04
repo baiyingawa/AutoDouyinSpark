@@ -74,7 +74,7 @@ const AppConfigForm: React.FC<AppConfigFormProps> = ({ initialConfig, onSave }) 
         <h3 className="text-lg font-semibold text-white">应用配置</h3>
       </div>
 
-      {/* 时间窗口开关 */}
+      {/* 限制发送时间开关 */}
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
@@ -84,14 +84,14 @@ const AppConfigForm: React.FC<AppConfigFormProps> = ({ initialConfig, onSave }) 
           onChange={(e) => handleChange('timeWindowsEnabled', e.target.checked)}
         />
         <label htmlFor="timeWindowsEnabled" className="text-sm text-gray-400">
-          启用时间窗口
+          启用限制发送时间
         </label>
         <span className="text-xs text-gray-600 ml-1">
           {config.timeWindowsEnabled ? '（仅在指定时段发送）' : '（全天可发送）'}
         </span>
       </div>
 
-      {/* 时间窗口列表 */}
+      {/* 限制发送时间列表 */}
       {config.timeWindowsEnabled && (
         <div className="space-y-2 ml-6">
           {config.timeWindows.map((win, idx) => (
@@ -129,7 +129,7 @@ const AppConfigForm: React.FC<AppConfigFormProps> = ({ initialConfig, onSave }) 
             onClick={addWindow}
           >
             <Plus size={14} />
-            添加时间窗口
+            添加限制发送时间
           </button>
         </div>
       )}
