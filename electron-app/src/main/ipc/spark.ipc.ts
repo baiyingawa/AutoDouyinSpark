@@ -1,7 +1,7 @@
 /**
  * spark.ipc.ts - 续火花 IPC Handler
  */
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import { pythonEngine } from '../python-engine';
 import { getDefaultScheduler } from '../scheduler';
@@ -14,14 +14,6 @@ export function registerSparkHandlers(): void {
       const selectedUsers = Array.isArray(users) ? users.filter((user) => typeof user === 'string' && user.trim()) : [];
       const result = await pythonEngine.send(!!force, selectedUsers);
 
-      // 发送后检查登录是否已过期
-      const loginResult = await pythonEngine.checkLogin();
-      if (loginResult.valid === false) {
-        BrowserWindow.getAllWindows().forEach((w) => {
-          w.webContents.send(IPC_CHANNELS.AUTH_LOGIN_EXPIRED);
-        });
-      }
-
       return {
         success: result.success === true,
         sentCount: result.sentCount || 0,
@@ -29,7 +21,6 @@ export function registerSparkHandlers(): void {
         failedUsers: result.failedUsers || [],
         screenshots: result.screenshots || [],
         message: result.message,
-        cookieValid: loginResult.valid !== false,
       };
     } catch (err) {
       return { success: false, sentCount: 0, failCount: 0, failedUsers: [], screenshots: [], error: String(err) };
@@ -76,13 +67,6 @@ export function registerSparkHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SPARK_REFRESH_DAYS, async (_event, force = false) => {
     try {
       const result = await pythonEngine.refreshDays(!!force);
-      // 刷新后检查登录状态
-      const loginResult = await pythonEngine.checkLogin();
-      if (loginResult.valid === false) {
-        BrowserWindow.getAllWindows().forEach((w) => {
-          w.webContents.send(IPC_CHANNELS.AUTH_LOGIN_EXPIRED);
-        });
-      }
       return { success: result.success !== false };
     } catch (err) {
       return { success: false, error: String(err) };

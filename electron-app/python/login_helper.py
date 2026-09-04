@@ -194,6 +194,26 @@ def _release_login_lock(data_dir: str) -> None:
         pass
 
 
+def _spark_is_running(data_dir: str) -> bool:
+    """检查续火花进程锁，避免登录流程清理正在使用的 Cookie。"""
+    lock_path = os.path.join(data_dir, ".spark_lock")
+    if not os.path.exists(lock_path):
+        return False
+    try:
+        with open(lock_path, "r", encoding="utf-8") as handle:
+            owner_pid = int(json.load(handle).get("pid", 0))
+        if owner_pid <= 0:
+            return False
+        try:
+            os.kill(owner_pid, 0)
+            return True
+        except OSError:
+            os.remove(lock_path)
+            return False
+    except (OSError, ValueError, json.JSONDecodeError):
+        return True
+
+
 def _write_login_cache(data_dir: str) -> None:
     cache_path = os.path.join(data_dir, ".spark_login_check")
     try:
@@ -231,9 +251,17 @@ def start_login(data_dir: str) -> dict:
         return {"success": False, "error": "Playwright 未安装，请先运行 pip install playwright && playwright install chromium"}
 
     os.makedirs(data_dir, exist_ok=True)
+    if _spark_is_running(data_dir):
+        _log("续火花任务正在运行，暂缓启动登录流程，避免替换 Cookie")
+        return {"success": False, "error": "续火花任务正在运行，请稍后再登录"}
     if not _acquire_login_lock(data_dir):
         _log("已有网页登录流程正在运行，忽略重复启动")
         return {"success": False, "error": "已有登录流程正在进行中"}
+
+    if _spark_is_running(data_dir):
+        _release_login_lock(data_dir)
+        _log("续火花任务在登录流程启动后开始，取消本次登录，保留原 Cookie")
+        return {"success": False, "error": "续火花任务正在运行，请稍后再登录"}
 
     pid_file = os.path.join(data_dir, _BROWSER_PID_FILE)
     cookie_path = os.path.join(data_dir, "cookie_export.json")
