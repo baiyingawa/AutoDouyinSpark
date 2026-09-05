@@ -1097,6 +1097,8 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
         page = context.new_page()
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
         time.sleep(4)
+        if _is_memory_error_page(page):
+            return {"ok": False, "name": name, "douyin_id": "", "memoryError": True, "error": "浏览器提示 Out of memory"}
         _dismiss_trust_dialog(page)
         _raise_if_captcha(page)
         result = send_to_friend(page, friend, msg)
@@ -1109,9 +1111,12 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
         return result
     except LoginExpiredException:
         raise
+    except RiskVerificationRequired:
+        raise
     except Exception as e:
         log(f"  ❌ 「{name}」worker 异常: {e}")
-        return {"ok": False, "name": name, "douyin_id": "", "error": str(e)}
+        error_text = str(e)
+        return {"ok": False, "name": name, "douyin_id": "", "memoryError": _is_memory_error_text(error_text), "error": error_text}
     finally:
         try:
             if browser:
@@ -1125,8 +1130,28 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
                 pass
 
 
+def _is_memory_error_text(text):
+    normalized = str(text or "").lower().replace("_", " ").replace("-", " ")
+    return any(marker in normalized for marker in (
+        "out of memory", "not enough memory", "memoryerror", "err oom", "oom",
+        "内存不足", "内存溢出", "内存不够",
+    ))
+
+
+def _is_memory_error_page(page):
+    try:
+        title = page.title() or ""
+    except Exception:
+        title = ""
+    try:
+        body = page.locator("body").first.inner_text(timeout=1000)[:3000]
+    except Exception:
+        body = ""
+    return _is_memory_error_text(f"{title}\n{body}")
+
+
 def _run_spark_session_parallel(force=False):
-    """最多 8 个独立浏览器并发续火花；同一进程内每个好友只提交一次。"""
+    """最多 8 个独立浏览器并发；检测内存提示后本轮降至 2/1 个并发。"""
     now = datetime.now(CHINA_TZ)
     msg_template = "[Auto]火花火花！{time}"
     try:
@@ -1148,29 +1173,54 @@ def _run_spark_session_parallel(force=False):
         if name and name in selected_names and name not in seen:
             seen.add(name)
             friends.append(dict(friend))
-    log(f"🚀 并发续火花启动: {len(friends)} 人，最大 8 线程")
+    log(f"🚀 并发续火花启动: {len(friends)} 人，初始最大 8 线程")
     if not friends:
         return False
 
-    all_ok = True
-    with ThreadPoolExecutor(max_workers=min(8, len(friends)), thread_name_prefix="spark") as pool:
-        futures = {pool.submit(_send_friend_worker, friend, msg, cookies, now): friend for friend in friends}
-        for future in as_completed(futures):
-            friend = futures[future]
-            name = friend.get(FRIEND_NAME_KEY, "")
-            try:
-                result = future.result()
-            except LoginExpiredException:
-                raise
-            except Exception as e:
-                log(f"❌ 「{name}」发送异常: {e}")
-                all_ok = False
-                continue
-            if result.get("ok"):
-                log(f"✅ 「{result.get('name') or name}」发送成功")
-            else:
-                log(f"❌ 「{name}」发送失败，未写入消息")
-                all_ok = False
+    result_by_name = {}
+    pending = list(friends)
+    workers = min(8, len(pending))
+    retried_after_memory = set()
+    while pending:
+        batch = pending[:workers]
+        pending = pending[workers:]
+        memory_detected = False
+        memory_retry = []
+        log(f"🚀 本批次启动 {len(batch)} 个浏览器，并发 {workers}")
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="spark") as pool:
+            futures = {pool.submit(_send_friend_worker, friend, msg, cookies, now): friend for friend in batch}
+            for future in as_completed(futures):
+                friend = futures[future]
+                name = friend.get(FRIEND_NAME_KEY, "")
+                try:
+                    result = future.result()
+                except LoginExpiredException:
+                    raise
+                except RiskVerificationRequired:
+                    raise
+                except Exception as e:
+                    log(f"❌ 「{name}」发送异常: {e}")
+                    result = {"ok": False, "name": name, "memoryError": _is_memory_error_text(e)}
+                if result.get("ok"):
+                    result_by_name[name] = True
+                    log(f"✅ 「{result.get('name') or name}」发送成功")
+                else:
+                    result_by_name[name] = False
+                    if result.get("memoryError"):
+                        memory_detected = True
+                        if name not in retried_after_memory:
+                            retried_after_memory.add(name)
+                            memory_retry.append(friend)
+                        log(f"⚠️ 「{name}」检测到浏览器内存不足，本轮降低并发")
+                    else:
+                        log(f"❌ 「{name}」发送失败，未写入消息")
+        if memory_detected:
+            next_workers = 1 if workers <= 2 else 2
+            if workers != next_workers:
+                workers = next_workers
+                log(f"⚠️ 检测到 Out of memory，后续任务并发降至 {workers}")
+            pending = memory_retry + pending
+    all_ok = all(result_by_name.get(friend.get(FRIEND_NAME_KEY, ""), False) for friend in friends)
     try:
         _update_spark_days()
     except Exception as e:
