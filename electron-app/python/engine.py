@@ -553,6 +553,15 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
         if json_mode:
             print(f"[engine] 发送异常: {e}", file=sys.stderr)
 
+    # 并发发送路径在 worker 中直接执行 send_to_friend，不会经过上面的
+    # 主线程 monkey-patch；优先使用并发模块汇总的真实结果，避免明明发出
+    # 成功消息却被前端显示为“发送失败”。
+    parallel_results = getattr(spark, "LAST_SEND_RESULTS", None)
+    if isinstance(parallel_results, dict) and parallel_results:
+        sent_users = [name for name, ok in parallel_results.items() if ok]
+        failed_users = [name for name, ok in parallel_results.items() if not ok]
+        success = len(failed_users) == 0 and len(sent_users) > 0
+
     # 保存失败用户列表
     try:
         with open(prev_failed_path, "w", encoding="utf-8") as f:

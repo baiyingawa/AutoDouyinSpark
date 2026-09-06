@@ -154,6 +154,8 @@ LOCK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_lock")
 CHINA_TZ = timezone(timedelta(hours=8))
 _PID = os.getpid()  # 用于日志标记 + 并发锁
 _DATA_WRITE_LOCK = threading.Lock()
+# 当前进程最近一次并发发送结果，供统一引擎汇总前端结果。
+LAST_SEND_RESULTS = {}
 
 # 浏览器模式（可通过 engine.py 覆写为 False 解决反爬）
 HEADLESS = True
@@ -1152,6 +1154,8 @@ def _is_memory_error_page(page):
 
 def _run_spark_session_parallel(force=False):
     """最多 8 个独立浏览器并发；检测内存提示后本轮降至 2/1 个并发。"""
+    global LAST_SEND_RESULTS
+    LAST_SEND_RESULTS = {}
     now = datetime.now(CHINA_TZ)
     msg_template = "[Auto]火花火花！{time}"
     try:
@@ -1221,6 +1225,7 @@ def _run_spark_session_parallel(force=False):
                 log(f"⚠️ 检测到 Out of memory，后续任务并发降至 {workers}")
             pending = memory_retry + pending
     all_ok = all(result_by_name.get(friend.get(FRIEND_NAME_KEY, ""), False) for friend in friends)
+    LAST_SEND_RESULTS = dict(result_by_name)
     try:
         _update_spark_days()
     except Exception as e:
