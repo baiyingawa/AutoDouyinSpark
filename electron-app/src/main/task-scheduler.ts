@@ -65,8 +65,17 @@ export function ensureSparkSchedulerTask(): void {
   createSparkSchedulerTask();
 }
 
-function genTaskXml(appPath: string): string {
-  const vbsPath = path.join(appPath, 'engine_silent.vbs').replace(/\\/g, '\\\\');
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function genTaskXml(appPath: string, userSid: string): string {
+  const vbsPath = xmlEscape(path.join(appPath, 'engine_silent.vbs'));
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -76,7 +85,7 @@ function genTaskXml(appPath: string): string {
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
-      <UserId>S-1-5-21-1635502149-4140466590-1257051598-1000</UserId>
+      <UserId>${xmlEscape(userSid)}</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
@@ -114,7 +123,7 @@ function genTaskXml(appPath: string): string {
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"${vbsPath}"</Arguments>
+      <Arguments>&quot;${vbsPath}&quot;</Arguments>
     </Exec>
   </Actions>
 </Task>`;
@@ -147,28 +156,42 @@ Set shell = Nothing`;
     fs.writeFileSync(vbsPath, vbsContent, 'utf-8');
   }
 
-  // 用 XML 创建任务（支持双触发器：登录时 + 每小时重复）
-  const xmlPath = path.join(appPath, 'spark_task.xml');
-  const xmlContent = genTaskXml(appPath);
-  fs.writeFileSync(xmlPath, xmlContent, 'utf-16le');
+  // 用 whoami 获取当前用户 SID，避免使用另一台机器/旧账户的固定 SID。
+  exec('whoami /user', { windowsHide: true }, (sidErr, sidStdout) => {
+    const sid = sidStdout.match(/S-1-\d+(?:-\d+)+/)?.[0];
+    if (sidErr || !sid) {
+      console.error('创建计划任务失败：无法获取当前用户 SID');
+      createFallbackSchedulerTask(vbsPath);
+      return;
+    }
 
-  const createCmd = `schtasks /Create /TN "${TASK_NAME}" /XML "${xmlPath}" /F`;
-  exec(createCmd, (err, stdout, stderr) => {
+    // 用 XML 创建任务（支持双触发器：登录时 + 每小时重复）。
+    // XML 声明为 UTF-16，必须写入 BOM，否则 schtasks 会在 (1,2) 报 XML 格式错误。
+    const xmlPath = path.join(appPath, 'spark_task.xml');
+    const xmlContent = genTaskXml(appPath, sid);
+    fs.writeFileSync(xmlPath, `\uFEFF${xmlContent}`, 'utf-16le');
+
+    const createCmd = `schtasks /Create /TN "${TASK_NAME}" /XML "${xmlPath}" /F`;
+    exec(createCmd, { windowsHide: true }, (err, stdout) => {
     // 清理临时 XML
     try { fs.unlinkSync(xmlPath); } catch {}
     if (err) {
-      console.error('创建计划任务失败:', err.message);
-      // 降级：使用简单的 HOURLY 命令创建
-      const fallbackCmd = `schtasks /Create /TN "${TASK_NAME}" /TR "wscript.exe \\"${vbsPath}\\"" /SC HOURLY /MO 1 /ST 23:29 /F /RL HIGHEST`;
-      exec(fallbackCmd, (err2, stdout2) => {
-        if (err2) {
-          console.error('降级创建计划任务也失败:', err2.message);
-        } else {
-          console.log('计划任务已创建（降级模式）:', stdout2);
-        }
-      });
+      console.error('创建计划任务失败，尝试降级模式');
+      createFallbackSchedulerTask(vbsPath);
     } else {
       console.log('计划任务已创建（登录触发+每小时重复）:', stdout);
+    }
+    });
+  });
+}
+
+function createFallbackSchedulerTask(vbsPath: string): void {
+  const fallbackCmd = `schtasks /Create /TN "${TASK_NAME}" /TR "wscript.exe \\"${vbsPath}\\"" /SC HOURLY /MO 1 /ST 23:29 /F /RL HIGHEST`;
+  exec(fallbackCmd, { windowsHide: true }, (err2, stdout2) => {
+    if (err2) {
+      console.error('降级创建计划任务也失败');
+    } else {
+      console.log('计划任务已创建（降级模式）:', stdout2);
     }
   });
 }
