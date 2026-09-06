@@ -1105,7 +1105,7 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
         context.add_cookies(cookies)
         page = context.new_page()
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
-        time.sleep(4)
+        _wait_until_page_ready(page)
         if _is_memory_error_page(page):
             return {"ok": False, "name": name, "douyin_id": "", "memoryError": True, "error": "浏览器提示 Out of memory"}
         _dismiss_trust_dialog(page)
@@ -1279,8 +1279,7 @@ def identify_friend(keyword):
         context.add_cookies(cookies)
         page = context.new_page()
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
-        time.sleep(5)
-        _dismiss_trust_dialog(page)
+        _wait_until_page_ready(page)
         _raise_if_captcha(page)
         if not _search_and_open(page, keyword):
             return {**result, "error": "搜索不到该好友"}
@@ -1335,8 +1334,7 @@ def identify_self():
         context.add_cookies(cookies)
         page = context.new_page()
         page.goto("https://www.douyin.com/user/self", wait_until="domcontentloaded", timeout=120000)
-        time.sleep(4)
-        _dismiss_trust_dialog(page)
+        _wait_until_page_ready(page, selectors=['body', 'main', 'h1'])
         body = page.locator("body").first.inner_text()[:30000]
         douyin_id = _extract_douyin_id_from_text(body)
         if not douyin_id:
@@ -1398,7 +1396,7 @@ def _check_login_status_playwright():
             context.add_cookies(cookies)
             page = context.new_page()
             page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(5)  # 等待足够时间让登录弹窗渲染
+            _wait_until_page_ready(page, timeout=60)
 
             # 登录状态检测（抖音通常弹窗而非跳转 URL）
             logged_in = True
@@ -1634,6 +1632,36 @@ def _dismiss_trust_dialog(page):
                 continue
     except Exception:
         pass
+    return False
+
+
+def _wait_until_page_ready(page, selectors=None, timeout=60):
+    """等待页面加载完成、主界面出现，再处理延迟挂载的弹窗。"""
+    try:
+        page.wait_for_load_state("load", timeout=timeout * 1000)
+    except Exception:
+        pass
+    selectors = selectors or [
+        'input[placeholder*="搜索"]', 'input[class*="search"]',
+        '[contenteditable="true"]', '.chat-container', '[class*="conversation"]',
+    ]
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for selector in selectors:
+            try:
+                if page.locator(selector).first.is_visible(timeout=300):
+                    time.sleep(2)
+                    for _ in range(3):
+                        _dismiss_trust_dialog(page)
+                        time.sleep(0.8)
+                    return True
+            except Exception:
+                continue
+        time.sleep(0.5)
+    time.sleep(2)
+    for _ in range(3):
+        _dismiss_trust_dialog(page)
+        time.sleep(0.8)
     return False
 
 
@@ -2017,9 +2045,9 @@ def send_messages():
         log("🌐 正在打开 douyin.com...")
         log("🌐 正在打开 douyin.com/chat...")
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
-        log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)")
-        time.sleep(5)
-        _dismiss_trust_dialog(page)
+        log(f"✅ 聊天页面加载完成 ({time.time()-t0:.1f}s)，等待页面组件就绪")
+        _wait_until_page_ready(page)
+        log(f"✅ 页面组件已就绪 ({time.time()-t0:.1f}s)，已完成弹窗检查")
         _raise_if_captcha(page)
 
         # === 登录过期检测 ===
@@ -2042,8 +2070,10 @@ def send_messages():
             log(f"⚠️ 聊天界面等待超时，继续... ({time.time()-t0:.1f}s)")
         time.sleep(3)
 
-        # 3. 关闭信任登录弹窗（如果存在）
-        _dismiss_trust_dialog(page)
+        # 3. 页面稳定后再次关闭延迟出现的信任登录弹窗
+        for _ in range(2):
+            _dismiss_trust_dialog(page)
+            time.sleep(0.8)
         _raise_if_captcha(page)
         # 抓取头像
         _scrape_avatars(page)
@@ -2331,7 +2361,7 @@ def _update_spark_days():
             page = context.new_page()
 
             page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
-            time.sleep(5)
+            _wait_until_page_ready(page)
             try:
                 page.wait_for_selector('[contenteditable="true"], .chat-container, [class*="chat"]', timeout=60000)
             except:
