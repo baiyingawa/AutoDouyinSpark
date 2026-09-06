@@ -73,6 +73,7 @@ def _save_cookies_from_context(context, cookie_path: str) -> int:
     """从浏览器 context 导出 cookie 并保存到文件（调用方已通过 _is_logged_in 验证）"""
     try:
         cookies = context.cookies()
+        cookies = [c for c in cookies if isinstance(c, dict)]
         cookie_count = len(cookies)
         # 至少需要 5 条 cookie 才认为有效（防御性检查）
         if cookie_count < 5:
@@ -121,9 +122,13 @@ def _merge_cookies(existing: list, new_cookies: list) -> list:
     """合并 cookie 列表，新 cookie 覆盖旧 cookie（同名同域）"""
     seen = {}
     for c in existing:
+        if not isinstance(c, dict):
+            continue
         key = (c.get("domain", ""), c.get("name", ""))
         seen[key] = c
     for c in new_cookies:
+        if not isinstance(c, dict):
+            continue
         key = (c.get("domain", ""), c.get("name", ""))
         seen[key] = c
     return list(seen.values())
@@ -134,7 +139,7 @@ def _is_logged_in(context) -> bool:
     try:
         cookies = context.cookies()
         result = _has_login_markers(cookies)
-        cookie_names = [c.get("name", "") for c in cookies]
+        cookie_names = [c.get("name", "") for c in cookies if isinstance(c, dict)]
         _log(f"Cookie 检查: count={len(cookies)}, markers={[n for n in cookie_names if n in _LOGIN_COOKIE_MARKERS]}, logged_in={result}")
         return result
     except Exception as e:
@@ -146,7 +151,7 @@ def _has_login_markers(cookies_list: list) -> bool:
     """检查 cookie 列表是否有登录标志性名称"""
     if len(cookies_list) < _MIN_COOKIE_COUNT:
         return False
-    cookie_names = {c.get("name", "") for c in cookies_list}
+    cookie_names = {c.get("name", "") for c in cookies_list if isinstance(c, dict)}
     for marker in _LOGIN_COOKIE_MARKERS:
         if marker in cookie_names:
             return True
@@ -166,7 +171,8 @@ def _acquire_login_lock(data_dir: str) -> bool:
         except FileExistsError:
             try:
                 with open(lock_path, "r", encoding="utf-8") as handle:
-                    owner_pid = int(json.load(handle).get("pid", 0))
+                    lock_data = json.load(handle)
+                    owner_pid = int(lock_data.get("pid", 0)) if isinstance(lock_data, dict) else 0
                 if owner_pid > 0:
                     os.kill(owner_pid, 0)
                     return False
@@ -183,7 +189,8 @@ def _release_login_lock(data_dir: str) -> None:
     lock_path = os.path.join(data_dir, _LOGIN_LOCK_FILE)
     try:
         with open(lock_path, "r", encoding="utf-8") as handle:
-            owner_pid = int(json.load(handle).get("pid", 0))
+            lock_data = json.load(handle)
+            owner_pid = int(lock_data.get("pid", 0)) if isinstance(lock_data, dict) else 0
         if owner_pid != os.getpid():
             return
     except (OSError, ValueError, json.JSONDecodeError):
@@ -201,7 +208,8 @@ def _spark_is_running(data_dir: str) -> bool:
         return False
     try:
         with open(lock_path, "r", encoding="utf-8") as handle:
-            owner_pid = int(json.load(handle).get("pid", 0))
+            lock_data = json.load(handle)
+            owner_pid = int(lock_data.get("pid", 0)) if isinstance(lock_data, dict) else 0
         if owner_pid <= 0:
             return False
         try:
@@ -210,8 +218,10 @@ def _spark_is_running(data_dir: str) -> bool:
         except OSError:
             os.remove(lock_path)
             return False
-    except (OSError, ValueError, json.JSONDecodeError):
-        return True
+    except (OSError, ValueError, json.JSONDecodeError, TypeError):
+        try: os.remove(lock_path)
+        except OSError: pass
+        return False
 
 
 def _write_login_cache(data_dir: str) -> None:
@@ -243,7 +253,6 @@ def start_login(data_dir: str) -> dict:
     - 登录成功后自动保存 Cookie 并关闭浏览器
     - 返回 { success, cookieCount, browserPid, loginMethod, error }
     """
-    _log(f"===== start_login 开始, data_dir={data_dir} =====")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -255,8 +264,11 @@ def start_login(data_dir: str) -> dict:
         _log("续火花任务正在运行，暂缓启动登录流程，避免替换 Cookie")
         return {"success": False, "error": "续火花任务正在运行，请稍后再登录"}
     if not _acquire_login_lock(data_dir):
-        _log("已有网页登录流程正在运行，忽略重复启动")
+        _log("已有网页登录流程正在运行，忽略重复启动请求")
         return {"success": False, "error": "已有登录流程正在进行中"}
+
+    # 只有成功取得同账户登录锁后才记录“开始”，避免重复进程制造误导性启动日志。
+    _log(f"===== start_login 开始, data_dir={data_dir} =====")
 
     if _spark_is_running(data_dir):
         _release_login_lock(data_dir)
@@ -430,6 +442,8 @@ def poll_login(data_dir: str) -> dict:
         try:
             with open(pid_file, "r") as f:
                 state = json.load(f)
+            if not isinstance(state, dict):
+                raise ValueError("登录状态文件格式无效")
             started = state.get("timestamp", 0)
             browser_pid = state.get("pid")
 
@@ -463,6 +477,8 @@ def abort_login(data_dir: str):
         try:
             with open(pid_file, "r") as f:
                 state = json.load(f)
+            if not isinstance(state, dict):
+                raise ValueError("登录状态文件格式无效")
             browser_pid = state.get("pid")
             if browser_pid and browser_pid > 0:
                 try:

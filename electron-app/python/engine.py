@@ -357,8 +357,10 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
                 _raw = _json.load(_f)
             if isinstance(_raw, list):
                 cookie_total = len(_raw)
-                cookie_names = [_c.get("name", "") for _c in _raw if _c.get("name")]
+                cookie_names = [_c.get("name", "") for _c in _raw if isinstance(_c, dict) and _c.get("name")]
                 for _c in _raw:
+                    if not isinstance(_c, dict):
+                        continue
                     _exp = _c.get("expirationDate") or _c.get("expires")
                     if _exp is None or _exp > time.time():
                         cookie_valid_count += 1
@@ -659,6 +661,8 @@ def action_login_start(data_dir: str, json_mode: bool = True) -> dict:
     try:
         from login_helper import start_login
         result_data = start_login(data_dir)
+        if not isinstance(result_data, dict):
+            result_data = {"success": False, "error": f"登录模块返回了无效结果: {type(result_data).__name__}"}
         result = {
             "success": result_data.get("success", False),
             "cookieCount": result_data.get("cookieCount", 0),

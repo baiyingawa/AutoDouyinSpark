@@ -1553,6 +1553,8 @@ def normalize_cookies(raw_data, target_domain):
     cookies = []
     if isinstance(raw_data, list):
         for c in raw_data:
+            if not isinstance(c, dict):
+                continue
             name = c.get("name", "")
             if not name:
                 continue
