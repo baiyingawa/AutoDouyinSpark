@@ -74,6 +74,9 @@ const DashboardPage: React.FC = () => {
       window.electronAPI.sparkSend(true, state.forceSendUsers || []).then(async (result) => {
         if (result.success) {
           setForceSendMsg(`✅ 强制发送成功！(${result.sentCount} 条)`);
+        } else if (result.sentCount > 0) {
+          const failed = result.failedUsers?.length ? `：失败好友 ${result.failedUsers.join('、')}` : '';
+          setForceSendMsg(`⚠️ 部分发送完成（成功 ${result.sentCount} 条，失败 ${result.failCount} 条）${failed}`);
         } else {
           setForceSendMsg(`❌ 强制发送失败${result.error ? `：${result.error}` : ''}`);
         }
@@ -109,6 +112,9 @@ const DashboardPage: React.FC = () => {
           clickCountRef.current = 0;
           setUnlockText('');
         }
+      } else if (result.sentCount > 0) {
+        const failed = result.failedUsers?.length ? `：失败好友 ${result.failedUsers.join('、')}` : '';
+          setSendResult(`部分发送完成（成功 ${result.sentCount} 条，失败 ${result.failCount} 条）${failed}`);
       } else {
         setSendResult(`发送失败${result.error ? `：${result.error}` : ''}`);
       }

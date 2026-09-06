@@ -767,11 +767,18 @@ def _click_private_search_result(page, keyword):
     try:
         result = page.evaluate(
             """(target) => {
+                const clean = (value) => (value || '')
+                    .replace(/\\u200b|\\u200c|\\u200d|\\ufeff|\\u00a0/g, '')
+                    .replace(/\\s+/g, ' ').trim()
+                    .replace(/\\s*[🔥]\\s*\\d+\\s*$/, '')
+                    .replace(/\\s*重燃中\\s*\\d+\\s*\\/\\s*\\d+\\s*$/, '')
+                    .trim();
+                const isGroup = (value) => /\\(\\s*\\d+\\s*\\)\\s*$/.test(clean(value));
                 const searchItems = Array.from(document.querySelectorAll('[class*="SearchPanelitembox"]'));
                 const searchItem = searchItems.find((candidate) => {
                     const title = candidate.querySelector('[class*="SearchPanelitemtitle"]');
-                    return (title?.textContent || '').replace(/\\s+/g, ' ').trim() === target &&
-                        !/\\(\\s*\\d+\\s*\\)\\s*$/.test((title?.textContent || '').trim());
+                    const titleText = title?.textContent || '';
+                    return clean(titleText) === target && !isGroup(titleText);
                 });
                 if (searchItem) {
                     const chatButton = searchItem.querySelector('[class*="SearchPanelitemchat_btn"]');
@@ -781,16 +788,16 @@ def _click_private_search_result(page, keyword):
                 const rows = Array.from(document.querySelectorAll('[data-e2e="conversation-item"]'));
                 const row = rows.find((candidate) => {
                     const title = candidate.querySelector('.conversationConversationItemtitle');
-                    const name = (title?.textContent || '').replace(/\\s+/g, ' ').trim();
-                    return name === target &&
-                        !/\\(\\s*\\d+\\s*\\)\\s*$/.test(name) &&
+                    const rawName = title?.textContent || '';
+                    const name = clean(rawName);
+                    return name === target && !isGroup(rawName) &&
                         !candidate.querySelector('.commonConversationIconnoDrag') &&
                         !!candidate.querySelector('.commonIMAvataravatarContainer');
                 });
                 if (!row) return { clicked: false, reason: 'private_result_not_found' };
                 row.scrollIntoView({ block: 'center' });
                 (row.querySelector('.conversationConversationItemrowArea2') || row).click();
-                return { clicked: true, name: row.querySelector('.conversationConversationItemtitle')?.textContent?.trim() || target };
+                return { clicked: true, name: clean(row.querySelector('.conversationConversationItemtitle')?.textContent) || target };
             }""",
             keyword,
         )
@@ -1053,7 +1060,7 @@ def send_to_friend(page, friend, msg):
             )
         return {"ok": True, "name": new_name, "douyin_id": found_id or douyin_id}
 
-    return {"ok": False, "name": name, "douyin_id": douyin_id}
+    return {"ok": False, "name": name, "douyin_id": douyin_id, "error": "未找到匹配的私聊会话或当前窗口校验未通过"}
 
 
 def _save_spark_screenshot(page, display_name, shot_time):

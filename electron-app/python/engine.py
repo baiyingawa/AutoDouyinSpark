@@ -590,6 +590,13 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
         if name not in screenshots_before or screenshots_before[name] != stamp
     )
 
+    if success:
+        message = f"全部发送成功（{len(sent_users)} 条）"
+    elif sent_users:
+        message = f"部分发送完成：成功 {len(sent_users)} 条，失败 {len(failed_users)} 条"
+    else:
+        message = "没有好友发送成功"
+
     result = {
         "success": success,
         "captchaRequired": bool(getattr(spark, "RISK_VERIFICATION_REQUIRED", False)),
@@ -597,6 +604,8 @@ def action_send(data_dir: str, force: bool = False, users: list[str] | None = No
         "failCount": len(failed_users),
         "failedUsers": failed_users,
         "screenshots": new_screenshots,
+        "message": message,
+        "error": None if success else message,
     }
     _json_out(result, json_mode)
     return result

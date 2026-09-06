@@ -26,6 +26,7 @@ export function registerSparkHandlers(): void {
         failedUsers: result.failedUsers || [],
         screenshots: result.screenshots || [],
         message: result.message,
+        error: result.error,
         captchaRequired: result.captchaRequired === true,
       };
     } catch (err) {
