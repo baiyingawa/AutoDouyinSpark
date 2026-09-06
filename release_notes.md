@@ -3,6 +3,7 @@
 ### 🐛 修复
 
 - 修复网页登录遇到损坏的锁文件、浏览器状态文件或异常 Cookie 元素时触发 `'int' object has no attribute 'get'`，现在会自动过滤脏数据并清理无效锁。
+- 修复主页切换校验 Cookie 时，`sameSite` 异常对象触发 `unhashable type: 'dict'` 并误跳转登录页的问题。
 
 ### ✨ 新增与优化
 

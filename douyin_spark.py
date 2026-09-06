@@ -122,8 +122,16 @@ if os.path.exists(_CONFIG_FILE):
                 TARGET_USERS = _users
     except Exception:
         pass
-# 去重：防止配置文件中用户重复导致同一人发送多次
-TARGET_USERS = list(dict.fromkeys(TARGET_USERS))
+# 去重：防止配置文件中用户重复导致同一人发送多次。
+# 兼容新版好友对象，不能直接对 dict 使用 dict.fromkeys()。
+_deduped_target_users = []
+_seen_target_names = set()
+for _target_user in TARGET_USERS:
+    _target_name = _target_user.get("name", "") if isinstance(_target_user, dict) else str(_target_user)
+    if _target_name and _target_name not in _seen_target_names:
+        _seen_target_names.add(_target_name)
+        _deduped_target_users.append(_target_user)
+TARGET_USERS = _deduped_target_users
 COOKIE_FILE = os.path.join(SHARED_DATA_DIR, "cookie_export.json")
 STATE_FILE = os.path.join(SHARED_DATA_DIR, ".spark_state")
 STREAK_FILE = os.path.join(SHARED_DATA_DIR, ".spark_streak")
@@ -978,6 +986,8 @@ def get_cookie_valid_status():
         try:
             with open(LOGIN_CHECK_FILE, "r", encoding="utf-8") as f:
                 st = json.load(f)
+            if not isinstance(st, dict):
+                raise ValueError("登录状态缓存格式无效")
             last = datetime.fromisoformat(st.get("checked_at", "2000-01-01"))
             if (now - last).total_seconds() < _COOKIE_CHECK_INTERVAL:
                 return st  # 缓存有效
@@ -1092,6 +1102,8 @@ def normalize_cookies(raw_data, target_domain):
     cookies = []
     if isinstance(raw_data, list):
         for c in raw_data:
+            if not isinstance(c, dict):
+                continue
             name = c.get("name", "")
             if not name:
                 continue
@@ -1113,7 +1125,7 @@ def normalize_cookies(raw_data, target_domain):
                 "no_restriction": "None", "strict": "Strict",
                 "lax": "Lax", "Strict": "Strict", "Lax": "Lax", "None": "None",
             }
-            if same_site in same_site_map:
+            if isinstance(same_site, str) and same_site in same_site_map:
                 cookie["sameSite"] = same_site_map[same_site]
             cookies.append(cookie)
     return cookies

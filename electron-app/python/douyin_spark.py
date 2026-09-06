@@ -1576,7 +1576,7 @@ def normalize_cookies(raw_data, target_domain):
                 "no_restriction": "None", "strict": "Strict",
                 "lax": "Lax", "Strict": "Strict", "Lax": "Lax", "None": "None",
             }
-            if same_site in same_site_map:
+            if isinstance(same_site, str) and same_site in same_site_map:
                 cookie["sameSite"] = same_site_map[same_site]
             cookies.append(cookie)
     return cookies

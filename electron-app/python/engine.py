@@ -266,6 +266,8 @@ def _read_fresh_login_cache(data_dir: str):
             return None
         with open(cache_path, "r", encoding="utf-8") as f:
             cached = json.load(f)
+        if not isinstance(cached, dict):
+            return None
         if cached.get("valid") is not True:
             return None
         checked_at = datetime.fromisoformat(cached.get("checked_at", ""))
@@ -331,7 +333,7 @@ def action_status(data_dir: str, json_mode: bool = True) -> dict:
                 with open(login_check_path, "r", encoding="utf-8") as _f:
                     _st = json.load(_f)
                 # 只有缓存明确说 valid 才认为有效
-                if _st.get("valid") is True:
+                if isinstance(_st, dict) and _st.get("valid") is True:
                     # 且缓存不能超过 1 小时
                     checked_at = _st.get("checked_at", "")
                     if checked_at:
@@ -778,6 +780,8 @@ def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
 
     try:
         status_data = spark.get_cookie_valid_status()
+        if not isinstance(status_data, dict):
+            raise TypeError(f"登录状态返回类型异常: {type(status_data).__name__}")
         result = {
             "success": True,
             "valid": status_data.get("valid", False),
