@@ -94,17 +94,34 @@ export function registerAuthHandlers(logManager?: LogManager): void {
     try {
       // 验证 JSON
       const parsed = JSON.parse(cookieJson);
-      const count = Array.isArray(parsed) ? parsed.length : 1;
 
       // 调用 Python 引擎导入
       const result = await pythonEngine.loginImport(cookieJson);
-      // 导入成功后确认计划任务
-      if (result.success !== false) {
-        await _onLoginSuccess(logManager);
+      if (result.success !== true) {
+        return {
+          success: false,
+          cookieCount: result.cookieCount || 0,
+          error: result.error || 'Cookie 导入失败',
+        };
       }
+
+      // 导入成功后立即做一次真实校验并写入当前账户缓存。此前这里只写入
+      // cookie 文件就直接跳转，首页 ProtectedRoute 随后校验失败时会立刻
+      // 把用户送回登录页，表现为“导入成功但无法进入首页”。
+      const loginCheck = await pythonEngine.checkLogin();
+      if (loginCheck.valid !== true) {
+        return {
+          success: false,
+          cookieCount: result.cookieCount || 0,
+          error: loginCheck.error || 'Cookie 已导入，但登录校验未通过，请确认 Cookie 属于当前账户且尚未过期',
+        };
+      }
+
+      // Cookie 校验通过后确认计划任务和账户身份
+      await _onLoginSuccess(logManager);
       return {
-        success: result.success !== false,
-        cookieCount: count,
+        success: true,
+        cookieCount: result.cookieCount || 0,
         error: result.error,
       };
     } catch (err) {

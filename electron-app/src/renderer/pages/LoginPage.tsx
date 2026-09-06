@@ -248,7 +248,7 @@ const LoginPage: React.FC = () => {
       const result = await window.electronAPI.authImportCookie(cookieText);
       if (result.success) {
         setSuccessMsg(`Cookie 导入成功（${result.cookieCount || 0} 条）`);
-        setTimeout(() => navigate('/'), 1500);
+        setTimeout(() => navigate('/', { replace: true }), 800);
       } else {
         setErrorMsg(result.error || 'Cookie 导入失败');
       }

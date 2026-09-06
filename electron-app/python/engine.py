@@ -728,11 +728,30 @@ def action_login_import(data_dir: str, stdin_data: str = "", json_mode: bool = T
     try:
         if not stdin_data:
             stdin_data = sys.stdin.read()
-        cookie_data = json.loads(stdin_data)
+        imported = json.loads(stdin_data)
+        # 兼容浏览器导出工具常见的 {"cookies": [...]} 包装格式，
+        # 同时过滤异常元素，避免导入成功后校验阶段再次因数据形状失败。
+        if isinstance(imported, dict) and isinstance(imported.get("cookies"), list):
+            imported = imported["cookies"]
+        if isinstance(imported, list):
+            cookie_data = [item for item in imported if isinstance(item, dict) and item.get("name")]
+        elif isinstance(imported, dict) and imported.get("name"):
+            cookie_data = [imported]
+        else:
+            cookie_data = []
+        if not cookie_data:
+            raise ValueError("Cookie JSON 中没有可用的 Cookie 条目")
         cookie_path = _get_cookie_path(data_dir)
-        with open(cookie_path, "w", encoding="utf-8") as f:
-            json.dump(cookie_data, f, ensure_ascii=False, indent=2)
-        result = {"success": True, "cookieCount": len(cookie_data) if isinstance(cookie_data, list) else 1}
+        _atomic_json_write(cookie_path, cookie_data)
+        # 导入了新凭据，旧账户的登录校验缓存必须失效；否则首页会读取旧的
+        # valid=false 并立即将用户重新送回登录页。
+        login_check_path = _get_login_check_path(data_dir)
+        try:
+            if os.path.exists(login_check_path):
+                os.remove(login_check_path)
+        except OSError:
+            pass
+        result = {"success": True, "cookieCount": len(cookie_data)}
     except json.JSONDecodeError:
         result = {"success": False, "error": "无效的 JSON 格式"}
     except Exception as e:

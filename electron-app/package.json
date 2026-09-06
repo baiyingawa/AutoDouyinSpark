@@ -1,6 +1,6 @@
 {
   "name": "auto-douyin-spark",
-  "version": "3.1.3",
+  "version": "3.1.4",
   "description": "AutoDouyinSpark - TikTok automation desktop app",
   "main": "dist/main/index.js",
   "scripts": {
