@@ -44,12 +44,18 @@ export class PythonEngine {
     this.config = { timeout: 120000, ...config };
   }
 
-  private async callEngine(action: string, extra: string[] = [], stdin?: string, dataDir = getDataDir()): Promise<any> {
+  private async callEngine(
+    action: string,
+    extra: string[] = [],
+    stdin?: string,
+    dataDir = getDataDir(),
+    timeout = this.config.timeout,
+  ): Promise<any> {
     const args = buildArgs(action, extra);
     const result = await this.pm.exec(
       path.resolve(getEnginePath()),
       ['--data-dir', dataDir, '--action', action, '--json', ...extra],
-      { timeout: this.config.timeout, stdin }
+      { timeout, stdin }
     );
 
     if (!result.success) {
@@ -85,7 +91,8 @@ export class PythonEngine {
   // --- 发送 ---
   async send(force: boolean = false, users: string[] = []): Promise<any> {
     const extra = force ? ['--force', ...(users.length ? ['--users', ...users] : [])] : [];
-    return this.callEngine('send', extra);
+    // 单个好友加载慢或多浏览器并发时，2 分钟会强制结束 Python 并关闭浏览器。
+    return this.callEngine('send', extra, undefined, getDataDir(), 600000);
   }
 
   // --- 刷新天数 ---

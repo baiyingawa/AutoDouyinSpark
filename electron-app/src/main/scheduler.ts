@@ -295,7 +295,7 @@ export class SparkScheduler {
         '--data-dir', dataDir,
         '--action', 'send',
         '--json',
-      ], { timeout: 120000 });
+      ], { timeout: 600000 });
 
       try {
         const parsed = JSON.parse(result.stdout || '{}');
@@ -306,7 +306,7 @@ export class SparkScheduler {
               '--data-dir', dataDir,
               '--action', 'send',
               '--json',
-            ], { timeout: 120000 });
+            ], { timeout: 600000 });
           }
         }
       } catch {

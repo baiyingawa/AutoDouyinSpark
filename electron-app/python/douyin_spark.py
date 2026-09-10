@@ -162,6 +162,9 @@ HEADLESS = True
 
 # Cookie 实测检查间隔（秒）— 默认 1 小时
 _COOKIE_CHECK_INTERVAL = 3600
+# 抖音聊天页会延迟加载会话和信任验证弹窗；不能用过短等待误判发送失败。
+_CHAT_PAGE_READY_TIMEOUT = 90
+_CHAT_INPUT_READY_TIMEOUT = 45
 
 
 def _acquire_lock(timeout=10):
@@ -844,12 +847,32 @@ def _enter_chat_fallback(page):
     return False
 
 
-def _wait_chat_ready(page, timeout=8):
-    try:
-        page.wait_for_selector('[contenteditable="true"]', timeout=timeout * 1000)
-        return True
-    except Exception:
-        return False
+def _wait_chat_ready(page, expected_title="", previous_title="", timeout=_CHAT_INPUT_READY_TIMEOUT):
+    """等待目标会话切换完成，不能只因旧会话输入框存在就判定就绪。"""
+    deadline = time.time() + timeout
+    input_el = page.locator('[contenteditable="true"]').first
+    expected_title = _clean_chat_display_name(expected_title)
+    previous_title = _clean_chat_display_name(previous_title)
+    while time.time() < deadline:
+        _dismiss_trust_dialog(page)
+        try:
+            if input_el.is_visible(timeout=800):
+                # 输入框在旧会话中也会常驻，必须等待聊天顶部标题确认会话已切换。
+                time.sleep(1.5)
+                _dismiss_trust_dialog(page)
+                current_title = _clean_chat_display_name(_get_active_chat_title(page) or "")
+                if not current_title or _is_group_chat_title(current_title):
+                    time.sleep(0.5)
+                    continue
+                if expected_title and current_title == expected_title:
+                    return True
+                if previous_title and current_title != previous_title:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    log(f"  ⚠️ 会话未在 {timeout}s 内切换完成，未发送消息")
+    return False
 
 
 def _search_and_open(page, keyword):
@@ -857,7 +880,10 @@ def _search_and_open(page, keyword):
     if not _fill_search(page, keyword):
         return False
     # 只能点击精确的好友会话行；不能点击页面上第一个“发消息”按钮。
-    if _click_private_search_result(page, keyword) and _wait_chat_ready(page, 6):
+    previous_title = _get_active_chat_title(page) or ""
+    if _click_private_search_result(page, keyword) and _wait_chat_ready(
+        page, expected_title=keyword, previous_title=previous_title,
+    ):
         return True
     return False
 
@@ -892,10 +918,13 @@ def _search_and_open_by_avatar(page, friend, stored_path):
         log(f"  🖼️ 头像匹配未命中（最佳距离 {best_dist}）")
         return False
     log(f"  🖼️ 头像匹配命中候选（距离 {best_dist}）")
+    previous_title = _get_active_chat_title(page) or ""
     if _click_result_img(page, best.get("index")):
-        if _wait_chat_ready(page, 6):
+        if _wait_chat_ready(page, expected_title=friend[FRIEND_NAME_KEY], previous_title=previous_title):
             return True
-    return _enter_chat_fallback(page) and _wait_chat_ready(page, 5)
+    return _enter_chat_fallback(page) and _wait_chat_ready(
+        page, expected_title=friend[FRIEND_NAME_KEY], previous_title=previous_title,
+    )
 
 
 def _verify_chat_target(page, friend, title):
@@ -1105,7 +1134,8 @@ def _send_friend_worker(friend, msg, cookies, shot_time):
         context.add_cookies(cookies)
         page = context.new_page()
         page.goto("https://www.douyin.com/chat", wait_until="domcontentloaded", timeout=120000)
-        _wait_until_page_ready(page)
+        if not _wait_until_page_ready(page, timeout=_CHAT_PAGE_READY_TIMEOUT):
+            return {"ok": False, "name": name, "douyin_id": "", "error": "聊天页加载超时，未执行发送"}
         if _is_memory_error_page(page):
             return {"ok": False, "name": name, "douyin_id": "", "memoryError": True, "error": "浏览器提示 Out of memory"}
         _dismiss_trust_dialog(page)
@@ -1635,10 +1665,11 @@ def _dismiss_trust_dialog(page):
     return False
 
 
-def _wait_until_page_ready(page, selectors=None, timeout=60):
+def _wait_until_page_ready(page, selectors=None, timeout=_CHAT_PAGE_READY_TIMEOUT):
     """等待页面加载完成、主界面出现，再处理延迟挂载的弹窗。"""
     try:
-        page.wait_for_load_state("load", timeout=timeout * 1000)
+        # 抖音会保留长连接，等待完整 load 可能一直不返回；以 DOM 就绪和界面稳定为准。
+        page.wait_for_load_state("domcontentloaded", timeout=min(timeout, 15) * 1000)
     except Exception:
         pass
     selectors = selectors or [
@@ -1654,7 +1685,9 @@ def _wait_until_page_ready(page, selectors=None, timeout=60):
                     for _ in range(3):
                         _dismiss_trust_dialog(page)
                         time.sleep(0.8)
-                    return True
+                    # 弹窗关闭后确认主界面没有在加载过程中消失。
+                    if page.locator(selector).first.is_visible(timeout=800):
+                        return True
             except Exception:
                 continue
         time.sleep(0.5)

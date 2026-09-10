@@ -23,6 +23,67 @@ ChartJS.register(
 
 const avatarImageCache = new Map<string, HTMLImageElement>();
 
+interface AvatarPluginOptions {
+  enabled?: boolean;
+  avatars?: Record<string, string>;
+}
+
+// 插件必须从 Chart.js 的动态 options 读取开关。React 图表实例创建后不会
+// 替换插件闭包，否则初始的 showAvatars=false 会让后续勾选永远不生效。
+const avatarPointPlugin = {
+  id: 'sparkAvatarPoints',
+  afterDatasetsDraw(chart: any, _args: unknown, pluginOptions: AvatarPluginOptions) {
+    if (!pluginOptions?.enabled) return;
+
+    const avatars = pluginOptions.avatars || {};
+    const groups = new Map<string, Array<{ x: number; y: number; label: string; color: string; index: number }>>();
+    chart.data.datasets.forEach((dataset: any, datasetIndex: number) => {
+      let lastIndex = -1;
+      dataset.data.forEach((value: number | null, index: number) => {
+        if (value !== null && value !== undefined) lastIndex = index;
+      });
+      if (lastIndex < 0) return;
+      const point = chart.getDatasetMeta(datasetIndex).data[lastIndex];
+      if (!point) return;
+      const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
+      const group = groups.get(key) || [];
+      group.push({ x: point.x, y: point.y, label: dataset.label, color: dataset.borderColor, index: group.length });
+      groups.set(key, group);
+    });
+
+    const radius = 15;
+    const { left, right, top, bottom } = chart.chartArea;
+    const ctx = chart.ctx;
+    groups.forEach((group) => group.forEach((item) => {
+      const spread = (group.length - 1) * 12;
+      const x = Math.max(left + radius, Math.min(right - radius, item.x + item.index * 12 - spread / 2));
+      const y = Math.max(top + radius, Math.min(bottom - radius, item.y - Math.abs(item.index - (group.length - 1) / 2) * 5));
+      const source = avatars[item.label];
+      const image = source ? avatarImageCache.get(source) : null;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      if (image?.complete && image.naturalWidth > 0) ctx.drawImage(image, x - radius, y - radius, radius * 2, radius * 2);
+      else {
+        ctx.fillStyle = item.color;
+        ctx.fill();
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }));
+  },
+};
+
 interface SparkDaysChartProps {
   labels: string[];
   avatars?: Record<string, string>;
@@ -37,55 +98,29 @@ interface SparkDaysChartProps {
 
 const SparkDaysChart: React.FC<SparkDaysChartProps> = ({ labels, datasets, avatars, showAvatars = false }) => {
   const colors = ['#e94560', '#60a5fa', '#22c55e', '#eab308', '#a855f7', '#ec4899'];
-  const [, setAvatarVersion] = useState(0);
+  const [avatarVersion, setAvatarVersion] = useState(0);
   const avatarSources = datasets.map((ds) => `${ds.label}:${avatars?.[ds.label] || ''}`).join('|');
 
   useEffect(() => {
     if (!showAvatars) return;
-    const sources = datasets.map((ds) => avatars?.[ds.label]).filter(Boolean) as string[];
+    const sources = [...new Set(datasets.map((ds) => avatars?.[ds.label]).filter(Boolean) as string[])];
     let pending = sources.length;
     if (pending === 0) return;
     sources.forEach((source) => {
       const image = avatarImageCache.get(source) || new Image();
       avatarImageCache.set(source, image);
-      image.onload = () => { pending -= 1; if (pending === 0) setAvatarVersion((value) => value + 1); };
-      image.onerror = () => { pending -= 1; if (pending === 0) setAvatarVersion((value) => value + 1); };
-      image.src = source;
+      const complete = () => {
+        pending -= 1;
+        if (pending === 0) setAvatarVersion((value) => value + 1);
+      };
+      if (image.src && image.complete) complete();
+      else {
+        image.onload = complete;
+        image.onerror = complete;
+        image.src = source;
+      }
     });
   }, [avatarSources, showAvatars]);
-
-  const avatarPlugin = {
-    id: 'spark-avatar-points',
-    afterDatasetsDraw(chart: any) {
-      if (!showAvatars) return;
-      const groups = new Map<string, Array<{ x: number; y: number; label: string; color: string; index: number }>>();
-      chart.data.datasets.forEach((dataset: any, datasetIndex: number) => {
-        let lastIndex = -1;
-        dataset.data.forEach((value: number | null, index: number) => { if (value !== null && value !== undefined) lastIndex = index; });
-        if (lastIndex < 0) return;
-        const point = chart.getDatasetMeta(datasetIndex).data[lastIndex];
-        if (!point) return;
-        const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
-        const group = groups.get(key) || [];
-        group.push({ x: point.x, y: point.y, label: dataset.label, color: dataset.borderColor, index: group.length });
-        groups.set(key, group);
-      });
-      const ctx = chart.ctx;
-      groups.forEach((group) => group.forEach((item) => {
-        const spread = (group.length - 1) * 12;
-        const x = item.x + item.index * 12 - spread / 2;
-        const y = item.y - Math.abs(item.index - (group.length - 1) / 2) * 3;
-        const source = avatars?.[item.label];
-        const image = source ? avatarImageCache.get(source) : null;
-        ctx.save();
-        ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI * 2); ctx.closePath(); ctx.clip();
-        if (image && image.complete && image.naturalWidth > 0) ctx.drawImage(image, x - 15, y - 15, 30, 30);
-        else { ctx.fillStyle = item.color; ctx.fill(); }
-        ctx.restore();
-        ctx.save(); ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 15, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
-      }));
-    },
-  };
 
   const chartData = {
     labels,
@@ -116,6 +151,10 @@ const SparkDaysChart: React.FC<SparkDaysChartProps> = ({ labels, datasets, avata
         bodyColor: '#94a3b8',
         borderColor: '#334155',
         borderWidth: 1,
+      },
+      sparkAvatarPoints: {
+        enabled: showAvatars,
+        avatars: avatars || {},
       },
     },
     scales: {
@@ -182,7 +221,7 @@ const SparkDaysChart: React.FC<SparkDaysChartProps> = ({ labels, datasets, avata
         })}
       </div>
       <div className="h-64">
-        <Line data={chartData} options={options} plugins={[avatarPlugin]} />
+        <Line key={`${showAvatars}-${avatarSources}-${avatarVersion}`} data={chartData} options={options as any} plugins={[avatarPointPlugin]} />
       </div>
     </div>
   );
