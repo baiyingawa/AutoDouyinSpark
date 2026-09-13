@@ -134,8 +134,9 @@ export function registerAuthHandlers(logManager?: LogManager): void {
     try {
       const result = await pythonEngine.checkLogin();
       const valid = result.valid === true;
-      // 登录过期时通知所有前端窗口
-      if (!valid) {
+      const expired = result.expired === true;
+      // 仅在引擎明确识别到登录页时才通知前端跳转；网络异常不能踢出用户。
+      if (expired) {
         BrowserWindow.getAllWindows().forEach((w) => {
           w.webContents.send(IPC_CHANNELS.AUTH_LOGIN_EXPIRED);
         });
@@ -143,6 +144,7 @@ export function registerAuthHandlers(logManager?: LogManager): void {
       return {
         success: true,
         valid,
+        expired,
         checkedAt: result.checkedAt || new Date().toISOString(),
       };
     } catch (err) {

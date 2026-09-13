@@ -74,7 +74,7 @@ export function registerSparkHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.SPARK_REFRESH_DAYS, async (_event, force = false) => {
     try {
       const result = await pythonEngine.refreshDays(!!force);
-      return { success: result.success !== false };
+      return { success: result.success === true, error: result.error };
     } catch (err) {
       return { success: false, error: String(err) };
     }

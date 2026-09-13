@@ -177,7 +177,7 @@ export interface ElectronAPI {
   // 续火花
   sparkSend: (force?: boolean, users?: string[]) => Promise<SparkSendResult>;
   sparkStatus: () => Promise<SparkStatusResult>;
-  sparkRefreshDays: (force?: boolean) => Promise<{ success: boolean }>;
+  sparkRefreshDays: (force?: boolean) => Promise<{ success: boolean; error?: string }>;
   sparkSchedulerStatus: () => Promise<{
     success: boolean;
     running: boolean;

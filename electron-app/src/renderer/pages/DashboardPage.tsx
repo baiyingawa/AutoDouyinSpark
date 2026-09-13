@@ -158,7 +158,10 @@ const DashboardPage: React.FC = () => {
     setError(null);
     window.dispatchEvent(new CustomEvent('log-panel:auto-expand'));
     try {
-      await window.electronAPI.sparkRefreshDays(true);
+      const result = await window.electronAPI.sparkRefreshDays(true);
+      if (!result.success) {
+        throw new Error(result.error || '刷新火花天数失败');
+      }
       await loadStatus();
       setTimeout(() => window.dispatchEvent(new CustomEvent('log-panel:auto-collapse')), 2000);
     } catch (err) {

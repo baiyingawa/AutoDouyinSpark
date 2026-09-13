@@ -97,7 +97,8 @@ export class PythonEngine {
 
   // --- 刷新天数 ---
   async refreshDays(force = false): Promise<any> {
-    return this.callEngine('refresh-days', force ? ['--force'] : []);
+    // 仅抓取天数也需要等待聊天页完整加载，不能沿用默认两分钟超时。
+    return this.callEngine('refresh-days', force ? ['--force'] : [], undefined, getDataDir(), 300000);
   }
 
   // --- 登录 ---

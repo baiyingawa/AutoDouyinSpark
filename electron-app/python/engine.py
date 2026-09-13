@@ -620,6 +620,11 @@ def action_refresh_days(data_dir: str, force: bool = False, json_mode: bool = Tr
         _json_out(result, json_mode)
         return result
 
+    if hasattr(spark, 'SHARED_DATA_DIR'):
+        spark.SHARED_DATA_DIR = data_dir
+    if hasattr(spark, '_rebind_paths'):
+        spark._rebind_paths()
+
     if hasattr(spark, 'SCRIPT_DIR'):
         spark.SCRIPT_DIR = data_dir
     if hasattr(spark, 'COOKIE_FILE'):
@@ -640,17 +645,8 @@ def action_refresh_days(data_dir: str, force: bool = False, json_mode: bool = Tr
         spark.CONFIRM_FILE = os.path.join(data_dir, ".spark_confirm")
     if hasattr(spark, '_CONFIG_FILE'):
         spark._CONFIG_FILE = _get_config_path(data_dir)
-        # 重新读取 target_users（模块加载时读到的是旧路径的配置）
-        try:
-            _cfg_path = _get_config_path(data_dir)
-            if os.path.exists(_cfg_path):
-                with open(_cfg_path, "r", encoding="utf-8") as _f:
-                    _cfg = json.load(_f)
-                    _users = _cfg.get("target_users")
-                    if _users and isinstance(_users, list) and len(_users) > 0:
-                        spark.TARGET_USERS = _users
-        except Exception:
-            pass
+    if hasattr(spark, 'reload_friends'):
+        spark.reload_friends()
     # 根据配置决定是否隐藏浏览器
     if hasattr(spark, 'HEADLESS'):
         try:
@@ -666,8 +662,13 @@ def action_refresh_days(data_dir: str, force: bool = False, json_mode: bool = Tr
 
     try:
         if hasattr(spark, '_update_spark_days'):
-            spark._update_spark_days(force=force)
-        result = {"success": True}
+            updated = spark._update_spark_days(force=force)
+            result = {"success": True} if updated is True else {
+                "success": False,
+                "error": "未能获取火花天数，请查看日志后重试",
+            }
+        else:
+            result = {"success": False, "error": "当前引擎不支持火花天数刷新"}
     except Exception as e:
         result = {"success": False, "error": str(e)}
 
@@ -786,6 +787,7 @@ def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
         result = {
             "success": True,
             "valid": True,
+            "expired": False,
             "checkedAt": cached.get("checked_at", ""),
         }
         _json_out(result, json_mode)
@@ -795,6 +797,11 @@ def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
         result = {"success": False, "valid": False, "error": "无法导入 douyin_spark 模块"}
         _json_out(result, json_mode)
         return result
+
+    if hasattr(spark, 'SHARED_DATA_DIR'):
+        spark.SHARED_DATA_DIR = data_dir
+    if hasattr(spark, '_rebind_paths'):
+        spark._rebind_paths()
 
     if hasattr(spark, 'SCRIPT_DIR'):
         spark.SCRIPT_DIR = data_dir
@@ -821,14 +828,20 @@ def action_check_login(data_dir: str, json_mode: bool = True) -> dict:
             raise TypeError(f"登录状态返回类型异常: {type(status_data).__name__}")
         result = {
             "success": True,
-            "valid": status_data.get("valid", False),
+            "valid": status_data.get("valid") is True,
+            "expired": status_data.get("valid") is False and status_data.get("confirmed") is True,
             "checkedAt": status_data.get("checked_at", ""),
         }
     except Exception as e:
         # 尝试直接调用 check_login_status_playwright
         try:
             valid = spark._check_login_status_playwright()
-            result = {"success": True, "valid": valid, "checkedAt": datetime.now(CHINA_TZ).isoformat()}
+            result = {
+                "success": True,
+                "valid": valid,
+                "expired": valid is False,
+                "checkedAt": datetime.now(CHINA_TZ).isoformat(),
+            }
         except Exception as e2:
             result = {"success": False, "valid": False, "error": str(e2)}
     _json_out(result, json_mode)

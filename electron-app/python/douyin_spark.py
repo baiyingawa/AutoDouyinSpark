@@ -1406,20 +1406,23 @@ def identify_self():
             except Exception: pass
 
 
-def _check_login_status_playwright():
-    """用 Playwright 实测 Cookie 是否有效"""
+def _check_login_status_playwright_detail():
+    """实测 Cookie 状态；仅页面明确要求登录时才确认 valid=False。"""
     try:
         with open(COOKIE_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
         cookies = normalize_cookies(raw, ".douyin.com")
-    except:
-        return False
+    except Exception as e:
+        return {"valid": False, "confirmed": True, "error": f"Cookie 文件无法读取: {e}"}
+    if not cookies:
+        return {"valid": False, "confirmed": True, "error": "Cookie 文件中没有可用条目"}
 
     # 并发锁：避免多个检测实例同时开浏览器
     if not _acquire_lock():
         log("⚠️ 已有浏览器在运行，登录检测跳过")
-        return True  # 乐观假设有效，避免阻塞
+        return {"valid": None, "confirmed": False, "error": "已有浏览器在运行"}
 
+    browser = None
     try:
         with sync_playwright() as p:
             # 登录检测始终用 headless，不与用户手动登录的浏览器冲突
@@ -1460,12 +1463,24 @@ def _check_login_status_playwright():
                 except:
                     pass
 
-            browser.close()
-            return logged_in
-    except:
-        return False
+            return {"valid": logged_in, "confirmed": True}
+    except Exception as e:
+        # 网络波动、浏览器启动失败等不等于 Cookie 失效，绝不能据此把用户赶回登录页。
+        log(f"⚠️ 登录实测未完成，保留当前登录状态: {e}")
+        return {"valid": None, "confirmed": False, "error": str(e)}
     finally:
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
         _release_lock()
+
+
+def _check_login_status_playwright():
+    """兼容旧调用：检测不确定时保守地维持现有登录态。"""
+    status = _check_login_status_playwright_detail()
+    return status.get("valid") is not False
 
 
 def _invalidate_login_cache():
@@ -1478,7 +1493,7 @@ def _invalidate_login_cache():
 
 
 def get_cookie_valid_status():
-    """返回 Cookie 有效性状态（缓存最多 1 小时）"""
+    """返回 Cookie 有效性状态（缓存最多 1 小时，网络异常不判定为失效）。"""
     now = datetime.now(CHINA_TZ)
     if os.path.exists(LOGIN_CHECK_FILE):
         try:
@@ -1486,18 +1501,29 @@ def get_cookie_valid_status():
                 st = json.load(f)
             last = datetime.fromisoformat(st.get("checked_at", "2000-01-01"))
             if (now - last).total_seconds() < _COOKIE_CHECK_INTERVAL:
-                return st  # 缓存有效
+                if st.get("valid") is True or st.get("confirmed") is True:
+                    return st
         except:
             pass
-    # 实测
-    valid = _check_login_status_playwright()
-    result = {
-        "valid": valid,
-        "checked_at": now.isoformat(),
-    }
+    # 实测：只有明确出现登录页或 Cookie 文件不可用时才标记失效。
+    checked = _check_login_status_playwright_detail()
+    if checked.get("valid") is None:
+        result = {
+            "valid": True,
+            "confirmed": False,
+            "checked_at": now.isoformat(),
+            "error": checked.get("error", "登录实测未完成"),
+        }
+    else:
+        result = {
+            "valid": checked.get("valid") is True,
+            "confirmed": True,
+            "checked_at": now.isoformat(),
+        }
+        if checked.get("error"):
+            result["error"] = checked["error"]
     os.makedirs(os.path.dirname(LOGIN_CHECK_FILE), exist_ok=True)
-    with open(LOGIN_CHECK_FILE, "w", encoding="utf-8") as f:
-        json.dump(result, f)
+    _atomic_json_write(LOGIN_CHECK_FILE, result)
     return result
 
 # 北京时间窗口（小时）- 从配置文件读取，默认全天
@@ -2237,7 +2263,7 @@ def _scrape_spark_days(page, expand_list=True):
 
     if not result:
         log("⚠️ 未在会话列表中识别到火花标记，保留现有缓存")
-        return
+        return False
 
     old_cache = {}
     if os.path.exists(DAYS_CACHE):
@@ -2288,6 +2314,7 @@ def _scrape_spark_days(page, expand_list=True):
         _write_days_history(merged_days)
     except Exception as ex:
         log(f"⚠️ 写入历史记录失败: {ex}")
+    return True
 
 
 def _scrape_avatars(page):
@@ -2376,9 +2403,7 @@ def _should_skip_spark_check(today):
 
 
 def _init_today_baseline(today):
-    """每天首次运行时，从 spark_days_cache 取出"今日之前最终值"作为基准。
-    优先使用 cache 中的 prev_days（前次变化前的值），
-    如果已初始化过则直接返回已有基准值（不覆盖）。"""
+    """每天首次刷新前保存当时天数作为基准，后续检查不再改写。"""
     if os.path.exists(CONFIRM_FILE):
         try:
             with open(CONFIRM_FILE, "r", encoding="utf-8") as f:
@@ -2387,60 +2412,73 @@ def _init_today_baseline(today):
                 return st.get("prev_days", {})
         except:
             pass
-    # 从缓存取"前一次的最终值"作为今日基准
+    # 从缓存取刷新前的最新值；prev_days 可能跨越多天，不能作为今日比较基准。
     baseline = {}
     if os.path.exists(DAYS_CACHE):
         try:
             with open(DAYS_CACHE, "r", encoding="utf-8") as f:
                 cached = json.load(f)
-            # 优先使用 prev_days（变化前的值），更接近"昨日最终值"
-            if "prev_days" in cached and cached["prev_days"]:
-                baseline = cached["prev_days"]
-            else:
-                baseline = cached.get("days", {})
+            baseline = cached.get("days", {}) or cached.get("prev_days", {})
         except:
             pass
-    with open(CONFIRM_FILE, "w", encoding="utf-8") as f:
-        json.dump({"date": today, "confirmed": False, "prev_days": baseline, "latest_days": baseline}, f, ensure_ascii=False, indent=2)
+    if not isinstance(baseline, dict):
+        baseline = {}
+    baseline = {user: value for user, value in baseline.items() if user in TARGET_USERS and _valid_spark_day(value)}
+    _atomic_json_write(CONFIRM_FILE, {
+        "date": today,
+        "confirmed": False,
+        "prev_days": baseline,
+        "latest_days": baseline,
+        "users": {},
+    })
     log(f"📋 今日火花基准: {dict(baseline)}")
     return baseline
 
 
 def _confirm_spark_check(today, new_days):
-    """对比今日基准与新天数，确认对方也续了火花"""
+    """逐位好友对比今日基准，全部已增长后才确认对方已续火花。"""
     prev_days = _init_today_baseline(today)
-    increased = False
-    for user in prev_days:
-        old_v = prev_days.get(user, 0)
-        new_v = new_days.get(user, 0)
-        if new_v > old_v:
-            increased = True
-            break
-    # 更新 latest_days
-    with open(CONFIRM_FILE, "w", encoding="utf-8") as f:
-        json.dump({
-            "date": today,
-            "confirmed": increased,
-            "prev_days": prev_days,
-            "latest_days": new_days,
-        }, f, ensure_ascii=False, indent=2)
-    if increased:
-        log(f"✅ 对方今日已续火花（{dict(prev_days)}→{dict(new_days)}），今日不再检查")
+    states = {}
+    tracked_users = [user for user in TARGET_USERS if _valid_spark_day(prev_days.get(user))]
+    for user in TARGET_USERS:
+        old_v = prev_days.get(user)
+        new_v = new_days.get(user) if isinstance(new_days, dict) else None
+        if not _valid_spark_day(old_v):
+            states[user] = "unknown"
+        elif not _valid_spark_day(new_v):
+            states[user] = "pending"
+        elif new_v > old_v:
+            states[user] = "renewed"
+        else:
+            states[user] = "pending"
+    confirmed = bool(tracked_users) and all(states[user] == "renewed" for user in tracked_users)
+    _atomic_json_write(CONFIRM_FILE, {
+        "date": today,
+        "confirmed": confirmed,
+        "prev_days": prev_days,
+        "latest_days": new_days if isinstance(new_days, dict) else {},
+        "users": states,
+    })
+    if confirmed:
+        log(f"✅ 已确认 {len(tracked_users)} 位好友今日均续火花")
     else:
-        log(f"⏳ 对方尚未续火花（基准: {dict(prev_days)}，最新: {dict(new_days)}），继续检查")
+        pending = [user for user in tracked_users if states[user] != "renewed"]
+        log(f"⏳ 对方续火花待确认: {', '.join(pending) or '暂无可比对好友'}")
 
 
-def _update_spark_days():
-    """单独打开浏览器抓取火花天数，并判断对方是否续了"""
+def _update_spark_days(force=False):
+    """单独打开浏览器抓取火花天数；force 时始终实测，且绝不发送消息。"""
     if not os.path.exists(COOKIE_FILE):
         log("⚠️ 未检测到 Cookie 文件，跳过火花天数更新")
-        return
+        return False
     today = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-    if _should_skip_spark_check(today):
+    if not force and _should_skip_spark_check(today):
         log(f"⏭️ 今日对方续火花已确认，跳过检查")
-        return
+        return True
 
     log("🔥 正在更新火花天数...")
+    # 必须在本次抓取前固定基准，不能使用抓取后缓存中的旧 prev_days。
+    _init_today_baseline(today)
     try:
         with open(COOKIE_FILE, "r", encoding="utf-8") as f:
             raw = json.load(f)
@@ -2470,10 +2508,7 @@ def _update_spark_days():
             time.sleep(3)
             _dismiss_trust_dialog(page)
             _raise_if_captcha(page)
-            try:
-                _scrape_spark_days(page)
-            except Exception as e:
-                log(f"⚠️ 无法进入私信抓取火花天数: {e}")
+            scraped = _scrape_spark_days(page)
 
             try:
                 browser.close()
@@ -2486,6 +2521,10 @@ def _update_spark_days():
                 except:
                     pass
 
+        if not scraped:
+            log("⚠️ 火花天数未更新，跳过续火确认")
+            return False
+
         # 读取最新天数，判断对方是否续了
         if os.path.exists(DAYS_CACHE):
             try:
@@ -2495,8 +2534,10 @@ def _update_spark_days():
                     _confirm_spark_check(today, new_days)
             except:
                 pass
+        return True
     except Exception as e:
         log(f"⚠️ 更新火花天数失败: {e}")
+        return False
 
 
 def _run_spark_session(force=False):
@@ -2581,6 +2622,7 @@ def _run_spark_session(force=False):
 
         # === Step 1: 抓初始天数 + 确认 ===
         log("📸 抓取初始火花天数...")
+        _init_today_baseline(now.strftime("%Y-%m-%d"))
         _scrape_avatars(page)
         _open_session_list(page)
         time.sleep(1)

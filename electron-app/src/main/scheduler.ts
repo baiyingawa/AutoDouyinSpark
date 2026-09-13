@@ -219,7 +219,7 @@ export class SparkScheduler {
         return;
       }
 
-      // 检查缓存的登录状态（必须有且为 valid=true 才继续）
+      // 检查缓存的登录状态。只有引擎明确判定登录页出现时才要求重新登录。
       const loginCheckFile = path.join(dataDir, '.spark_login_check');
       if (!fs.existsSync(loginCheckFile)) {
         // 没有缓存 → 还没做过实测检查 → 跳过，等前端触发检查
@@ -233,7 +233,7 @@ export class SparkScheduler {
       }
 
       const cached = JSON.parse(fs.readFileSync(loginCheckFile, 'utf-8'));
-      if (cached.valid !== true) {
+      if (cached.valid !== true && cached.confirmed === true) {
         this.broadcastStatus({
           running: this.isRunning(),
           currentWindow: null,
@@ -244,7 +244,7 @@ export class SparkScheduler {
         return;
       }
 
-      // 检查缓存是否过期（> 1 小时）
+      // 缓存过期只表示需要在下次浏览器会话中重新实测，不能把用户直接送回登录页。
       if (cached.checked_at) {
         const checkedAt = new Date(cached.checked_at).getTime();
         const oneHour = 60 * 60 * 1000;
@@ -255,8 +255,6 @@ export class SparkScheduler {
             lastCheck: this.lastCheckTime,
             nextAction: 'login_check_stale',
           });
-          this._bringToFrontAndShowLogin();
-          return;
         }
       }
     } catch {
