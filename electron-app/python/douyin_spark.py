@@ -1272,7 +1272,7 @@ def _run_spark_session_parallel(force=False):
 
 
 def _record_days_history_from_cache():
-    """即使当天已确认并跳过刷新，也确保当天缓存进入历史记录。"""
+    """仅将当天实际刷新过的火花缓存补写到历史记录。"""
     if not os.path.exists(DAYS_CACHE):
         return
     try:
@@ -1280,6 +1280,11 @@ def _record_days_history_from_cache():
             cache = json.load(f)
         days = cache.get("days", {}) if isinstance(cache, dict) else {}
         if not isinstance(days, dict) or not days:
+            return
+        updated_at = cache.get("updated_at", "") if isinstance(cache, dict) else ""
+        today = datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
+        if not isinstance(updated_at, str) or not updated_at.startswith(today):
+            log("⏭️ 火花缓存不是今日刷新，跳过补写历史")
             return
         _write_days_history(days)
     except Exception as e:
@@ -2153,73 +2158,136 @@ def send_messages():
     return all_ok
 
 
+def _collect_conversation_rows(page, max_scrolls=24):
+    """收集会话列表的可见行，并滚动虚拟列表以取全量会话。"""
+    rows_by_key = {}
+    for _ in range(max_scrolls):
+        rows = page.evaluate("""() => {
+            const candidates = Array.from(document.querySelectorAll(
+                '[data-e2e="conversation-item"], [class*="conversationConversationItem"]'
+            ));
+            const output = [];
+            const seen = new Set();
+            for (const row of candidates) {
+                const rect = row.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) continue;
+                const titleNode = row.querySelector('[class*="conversationConversationItemtitle"]');
+                const title = (titleNode?.textContent || '').trim();
+                const text = (row.innerText || row.textContent || '').trim();
+                if (!title || !text || text.length > 500) continue;
+                const key = title + '\\n' + text;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    output.push({ title, text });
+                }
+            }
+            return output;
+        }""") or []
+        for row in rows:
+            if isinstance(row, dict):
+                key = f"{row.get('title', '')}\n{row.get('text', '')}"
+                if key.strip():
+                    rows_by_key[key] = row
+
+        moved = page.evaluate("""() => {
+            const seed = document.querySelector(
+                '[data-e2e="conversation-item"], [class*="conversationConversationItem"]'
+            );
+            if (!seed) return false;
+            let node = seed.parentElement;
+            while (node && node !== document.body) {
+                const style = getComputedStyle(node);
+                if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 8) {
+                    const before = node.scrollTop;
+                    node.scrollTop = Math.min(node.scrollTop + Math.max(120, node.clientHeight * 0.8), node.scrollHeight);
+                    return node.scrollTop > before + 1;
+                }
+                node = node.parentElement;
+            }
+            return false;
+        }""")
+        if not moved:
+            break
+        time.sleep(0.2)
+    return list(rows_by_key.values())
+
+
+def _valid_spark_day(value):
+    return isinstance(value, int) and 1 <= value <= 999
+
+
 def _scrape_spark_days(page, expand_list=True):
-    """从当前页面（已在私信列表）提取火花天数并缓存"""
-    import re
-    # 展开会话列表以便看到所有用户的聊天
+    """从私信会话行的火花标记提取天数，并保留未加载好友的上次有效值。"""
     if expand_list:
         _open_session_list(page)
         time.sleep(1)
-    sessions = page.evaluate("""() => {
-        const items = [];
-        const sel = 'div, span, a, li';
-        const els = document.querySelectorAll(sel);
-        els.forEach(el => {
-            const t = el.textContent.trim();
-            if (t.length > 0 && t.length < 300) items.push(t);
-        });
-        return items;
-    }""")
-    result = {}
-    for user in TARGET_USERS:
-        for text in sessions:
-            if user not in text:
-                continue
-            m = re.search(re.escape(user) + r'\s+(\d+)\D', text)
-            if m:
-                days = int(m.group(1))
-                if 1 <= days <= 999:
-                    result[user] = days
-                    break
-            parts = text.split(user, 1)
-            if len(parts) > 1:
-                m2 = re.search(r'(\d+)', parts[1][:30])
-                if m2:
-                    days = int(m2.group(1))
-                    if 1 <= days <= 999:
-                        result[user] = days
-                        break
-    if result:
-        # 更新缓存，同时记录旧值作为 prev_days
-        old_days = {}
-        if os.path.exists(DAYS_CACHE):
-            try:
-                with open(DAYS_CACHE, "r", encoding="utf-8") as f:
-                    old_days = json.load(f).get("days", {})
-            except:
-                pass
-        # 如果值有变化（增加），把旧值存为 prev_days
-        prev_days = None
-        for k in result:
-            if result[k] != old_days.get(k, 0):
-                prev_days = old_days
-                break
-        cache_data = {
-            "updated_at": datetime.now(CHINA_TZ).isoformat(),
-            "days": result,
-        }
-        if prev_days:
-            cache_data["prev_days"] = prev_days
-        elif "prev_days" in old_days:
-            # 值没变则保留历史 prev_days
-            cache_data["prev_days"] = old_days["prev_days"]
-        _atomic_json_write(DAYS_CACHE, cache_data)
-        log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k,v in result.items())}")
 
+    result = {}
+    for row in _collect_conversation_rows(page):
+        title = _clean_chat_display_name(row.get("title", ""))
+        if title not in TARGET_USERS or _is_group_chat_title(row.get("title", "")):
+            continue
+        # 仅接受会话行中的火花标记，避免把时间、未读数或消息内容误识别为天数。
+        marker = re.search(r"🔥\s*(\d{1,3})(?:\s*天)?", row.get("text", ""))
+        if not marker:
+            continue
+        days = int(marker.group(1))
+        if _valid_spark_day(days):
+            result[title] = days
+
+    if not result:
+        log("⚠️ 未在会话列表中识别到火花标记，保留现有缓存")
+        return
+
+    old_cache = {}
+    if os.path.exists(DAYS_CACHE):
         try:
-            _write_days_history(result)
-        except Exception as ex:
-            log(f"⚠️ 写入历史记录失败: {ex}")
+            with open(DAYS_CACHE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                old_cache = loaded
+        except Exception:
+            pass
+    raw_old_days = old_cache.get("days", {})
+    raw_prev_days = old_cache.get("prev_days", {})
+    if not isinstance(raw_old_days, dict):
+        raw_old_days = {}
+    if not isinstance(raw_prev_days, dict):
+        raw_prev_days = {}
+    previous_days = {
+        user: raw_prev_days[user]
+        for user in TARGET_USERS
+        if _valid_spark_day(raw_prev_days.get(user))
+    }
+
+    # 会话列表是虚拟滚动组件，偶发漏行不能清空已有好友数据。
+    old_days = {}
+    for user in TARGET_USERS:
+        if _valid_spark_day(raw_old_days.get(user)):
+            old_days[user] = raw_old_days[user]
+        elif user in previous_days:
+            old_days[user] = previous_days[user]
+    merged_days = dict(old_days)
+    merged_days.update(result)
+
+    cache_data = {
+        "updated_at": datetime.now(CHINA_TZ).isoformat(),
+        "days": merged_days,
+    }
+    if merged_days != old_days:
+        cache_data["prev_days"] = old_days
+    elif previous_days:
+        cache_data["prev_days"] = previous_days
+    _atomic_json_write(DAYS_CACHE, cache_data)
+
+    retained = [user for user in old_days if user not in result]
+    log(f"🔥 火花天数: {', '.join(f'{k}={v}' for k, v in result.items())}")
+    if retained:
+        log(f"📌 会话未加载，保留上次有效天数: {', '.join(retained)}")
+    try:
+        _write_days_history(merged_days)
+    except Exception as ex:
+        log(f"⚠️ 写入历史记录失败: {ex}")
 
 
 def _scrape_avatars(page):
